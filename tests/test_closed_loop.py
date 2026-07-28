@@ -11,12 +11,22 @@ import torch
 from PIL import Image
 
 from dataset import BatchDataset
+import run_dataset
+import run_single_image
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class ClosedLoopTests(unittest.TestCase):
+    def test_vscode_entry_points_keep_programs_separate(self):
+        single_command = run_single_image.build_command()
+        dataset_command = run_dataset.build_command()
+        self.assertIn("--coefficient", single_command)
+        self.assertNotIn("--coefficient", dataset_command)
+        self.assertNotIn("--aberration-coefficients", dataset_command)
+        self.assertNotIn("--aperture-height", dataset_command)
+
     def _generate(
         self,
         directory: Path,

@@ -32,6 +32,21 @@ python -m pip install -r requirements.txt
 
 The NVIDIA Windows driver is exposed to WSL; it should not be installed again inside WSL. The Linux CUDA Toolkit and cuDNN can coexist with that driver.
 
+## Run directly from VS Code (recommended for this project)
+
+No terminal command is required. First make sure VS Code has selected the interpreter:
+
+```text
+/home/xiangwan/miniconda3/envs/neuws/bin/python
+```
+
+Then use one of the two root-level entry points:
+
+1. Open `run_single_image.py`, edit the clearly marked settings block at the top, and click **Run Python File**. Edit `INPUT_IMAGE`, `OUTPUT_DIR`, `SIZE`, and the `ZERNIKE_COEFFICIENTS` dictionary.
+2. Open `run_dataset.py`, edit its settings block, and click **Run Python File**. Dataset aberrations remain randomly generated and independent from the single-image coefficient dictionary.
+
+Both files contain working defaults for this machine. The command-line interfaces described below remain available and override nothing in the VS Code entry points; the two ways of running are independent.
+
 ## Program 1: apply a specified aberration to one image
 
 This presentation-oriented program uses the full square field and requires explicit AOtools Noll coefficients. Coefficients are in radians. For example, Noll 4 is Defocus and Noll 7 is one Coma direction:
