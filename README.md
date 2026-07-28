@@ -1,54 +1,167 @@
-# Neural Wavefront Shaping
-​
-Code for the paper "NeuWS: Neural Wavefront Shaping for Guidestar-Free Imaging Through Static and Dynamic Scattering Media" by Brandon Y. Feng, Haiyun Guo, Mingyang Xie, Vivek Boominathan, Manoj K. Sharma, Ashok Veeraraghavan, and Christopher A. Metzler.
+# NeuWS: Neural Wavefront Shaping
 
-https://www.science.org/doi/10.1126/sciadv.adg4671
-​
-## Setup
-Follow these steps to set up the environment:
-``` 
-conda create -n neuws python=3.9
+This repository contains the code for “NeuWS: Neural Wavefront Shaping for Guidestar-Free Imaging Through Static and Dynamic Scattering Media” and a Python/AOtools closed-loop workflow for generating SLM patterns, simulating measurements, reconstructing a static scene, and evaluating the result.
+
+- [Paper](https://pmc.ncbi.nlm.nih.gov/articles/PMC10306297/)
+- [Dryad dataset and format description](https://datadryad.org/dataset/doi%3A10.5061/dryad.6t1g1jx42)
+- [Original upstream repository](https://github.com/Intelligent-Sensing/NeuWS)
+
+## Verified local environment
+
+The migration was verified in WSL on an NVIDIA GeForce RTX 5070 Ti (16 GB):
+
+- Python 3.10 in the `neuws` Conda environment
+- PyTorch 2.13.0+cu130
+- CUDA Toolkit 13.0 (`/usr/local/cuda`)
+- cuDNN 9.25 system packages; PyTorch reports cuDNN 9.2
+- AOtools 1.0.7
+
+Activate the existing environment with:
+
+```bash
+source ~/miniconda3/etc/profile.d/conda.sh
 conda activate neuws
-pip install -r requirements.txt
-pip install torch==1.12.0+cu113 torchvision==0.13.0+cu113 --extra-index-url https://download.pytorch.org/whl/cu113
-```
-We assume access to a GPU with CUDA 11.3.1 installed/supported.
-
-## Dataset
-Please download a NeuWS dataset from https://doi.org/10.5061/dryad.6t1g1jx42. The dataset is also available at https://rice.app.box.com/s/1fbdvj0w7x2xugzs94a02hnagkt7dwvr.
-
-## Reconstruct Experimental Data
-
-Place the experimental data in the folder `DATA_DIR/SCENE_NAME`. Set the variable `NUM_FRAMES` to the number of frames captured in the dataset. 
-
-For scenes containing static scene and static aberration (e.g. Fig. 2 in paper), run the following command:
-``` 
-python ./recon_exp_data.py \
-    --static_phase \
-    --num_t NUM_FRAMES --data_dir DATA_DIR/SCENE_NAME/Zernike_SLM_data \
-    --scene_name SCENE_NAME --phs_layers 4 --num_epochs 1000 --save_per_frame
 ```
 
-Example call (will take roughly 4 minutes on an Nvidia 3090 RTX GPU):
-``` 
-python ./recon_exp_data.py \
-    --static_phase \
-    --num_t 100 --data_dir ../NeuWS_data/static_objects_static_aberrations/dog_esophagus_0.5diffuser/Zernike_SLM_data  \
-    --scene_name dog_esophagus_0.5diffuser --phs_layers 4 --num_epochs 1000 --save_per_frame
+For a fresh compatible environment, install the PyTorch build appropriate for the machine first, then install the remaining packages:
+
+```bash
+python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+python -m pip install -r requirements.txt
 ```
 
-For scenes containing dynamic scene and dynamic aberration (e.g. Fig. 5 in paper), run the following command:
-``` 
-python ./recon_exp_data.py \
-    --dynamic_scene \
-    --num_t NUM_FRAMES --data_dir DATA_DIR/SCENE_NAME/Zernike_SLM_data \
-    --scene_name SCENE_NAME --phs_layers 4 --num_epochs 1000 --save_per_frame
+The NVIDIA Windows driver is exposed to WSL; it should not be installed again inside WSL. The Linux CUDA Toolkit and cuDNN can coexist with that driver.
+
+## Generate paper-style SLM patterns
+
+The paper default is a `256×256` computational field with a centered `144×256` active SLM aperture. Each pattern is a weighted sum of AOtools Noll modes 1–15, including Piston/Tip/Tilt, with independent Gaussian coefficients of default standard deviation `5 rad`.
+
+```bash
+python tools/generate_neuws_data.py patterns \
+  --output-dir data/patterns \
+  --size 256 --num-frames 100 --seed 0
 ```
 
-Example call (will take roughly 17 minutes on an Nvidia 3090 RTX GPU):
-``` 
-python ./recon_exp_data.py \
-    --dynamic_scene \
-    --num_t 100 --data_dir ../NeuWS_data/dynamic_objects_dynamic_aberrations/owlStamp_onionSkin/Zernike_SLM_data \
-    --scene_name owlStamp_onionSkin --phs_layers 4 --num_epochs 1000 --save_per_frame
+Any positive even square size is supported. The default active height is the nearest even value to `size×9/16`, or it can be set explicitly:
+
+```bash
+python tools/generate_neuws_data.py patterns \
+  --output-dir data/patterns_512 \
+  --size 512 --aperture-height 288 --num-frames 100
 ```
+
+Each run exports:
+
+- `SLM_simN.mat`, variable `proj_sim`, containing active-aperture phase in radians.
+- `slm_patterns.npy`, shaped `frames×active_height×size`.
+- `slm_coefficients.npy`.
+- `slm_png/SLM_simN.png`, a generic 16-bit encoding of wrapped `[0,2π)` phase to `[0,65535]`.
+- `manifest.json`, containing dimensions, seed, Noll modes, phase sign and parameters.
+
+The PNG files are not calibrated for a particular SLM. Device-specific LUT, gamma and voltage conversion must be added before hardware use.
+
+## Generate a static closed-loop simulation
+
+The input is converted to grayscale, center-cropped to a square, resized, and normalized to `[0,1]`. The object and unknown aberration remain static; only the SLM pattern changes per frame.
+
+For an easily verified 28-mode Zernike aberration:
+
+```bash
+python tools/generate_neuws_data.py simulate \
+  --input-image /path/to/object.tif \
+  --output-dir data/sim_static \
+  --size 256 --num-frames 100 \
+  --aberration-mode zernike --aberration-sigma 1 \
+  --seed 0 --device auto
+```
+
+For paper-style static scattering:
+
+```bash
+python tools/generate_neuws_data.py simulate \
+  --input-image /path/to/object.tif \
+  --output-dir data/sim_scattering \
+  --size 256 --num-frames 100 \
+  --aberration-mode complex-gaussian --seed 0
+```
+
+`complex-gaussian` creates an independent circular complex Gaussian pupil field and normalizes its mean aperture energy to one. `--noise-std` adds optional Gaussian camera noise and defaults to zero. Synthetic runs additionally create `SLM_rawN.mat` (`imsdata`, full square measurements) and `ground_truth.mat` (object, complex aberration, amplitude, phase and coefficients).
+
+The phase convention matches the paper loader:
+
+```text
+aperture * exp(-1j * proj_sim)
+```
+
+## Static reconstruction
+
+The loader infers the square measurement size and centered active aperture from the files. If `--num_t` is omitted, all continuously numbered samples are used. If `--width` is provided, it must match the inferred size. Frames are loaded from disk batch by batch rather than copied to the GPU all at once.
+
+```bash
+python recon_exp_data.py \
+  --static_phase \
+  --data_dir data/sim_static \
+  --scene_name sim_static \
+  --num_epochs 1000 --phs_layers 4
+```
+
+Absolute data paths are also accepted. The original experimental-data arguments remain available, including `--im_prefix`, `--slm_prefix`, `--num_t`, `--max_intensity`, `--zero_freq`, `--dynamic_scene`, and `--save_per_frame`. The unknown-aberration network still uses the original 28 AOtools Zernike input features; it does not reduce them to 15 or clear low-order modes.
+
+Results are written under `vis/SCENE_NAME/final/`, including `final_I_est.mat`, `final_aberration.mat`, display images, and `training_summary.json`. The `per_frame` directory is created only when `--save_per_frame` is enabled.
+
+## Evaluate a reconstruction
+
+Image metrics include raw PSNR/SSIM and, with `--register`, translation-registered metrics, recovered shift, and valid overlap:
+
+```bash
+python tools/evaluate_neuws.py image \
+  --ground-truth data/sim_static/ground_truth.mat \
+  --ground-truth-var object_image \
+  --estimate vis/sim_static/final/final_I_est.mat \
+  --estimate-var image \
+  --register --output-dir outputs/sim_static/image_metrics
+```
+
+Phase metrics use wrapped error inside the aperture. The primary result removes only Piston, Tip and Tilt (Noll 1–3). A separate diagnostic also removes Defocus and Coma (Noll 4, 7 and 8):
+
+```bash
+python tools/evaluate_neuws.py phase \
+  --ground-truth data/sim_static/ground_truth.mat \
+  --ground-truth-var aberration_field \
+  --estimate vis/sim_static/final/final_aberration.mat \
+  --estimate-var field \
+  --output-dir outputs/sim_static/phase_metrics
+```
+
+Both commands save `metrics.json` and a comparison figure. Phase evaluation also saves calibrated error arrays in `phase_errors.mat`.
+
+## Data contract and validation
+
+Samples must be continuously numbered from 1:
+
+```text
+SLM_sim1.mat  -> proj_sim: active_height × size
+SLM_raw1.mat  -> imsdata:  size × size
+SLM_sim2.mat
+SLM_raw2.mat
+...
+```
+
+Missing indices, missing variables, empty arrays, non-square or odd-sized measurements, inconsistent dimensions, non-finite values, negative measurements, and invalid normalization ranges raise explicit errors. New data use `manifest.json`; original paper data without a manifest default to phase sign `-1`.
+
+## Tests
+
+Run the CPU test suite with:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+The large `1000×1000` CUDA acceptance test is opt-in because it consumes substantial GPU memory:
+
+```bash
+NEUWS_RUN_LARGE_CUDA=1 python -m unittest \
+  tests.test_optics_and_evaluation.LargeCudaTests -v
+```
+
+See [MIGRATION.md](MIGRATION.md) for the MATLAB-to-Python mapping and scope decisions.

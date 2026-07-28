@@ -1,0 +1,27 @@
+# Generated datasets and reconstruction outputs
+/data/
+/outputs/
+/vis/
+
+# MATLAB/TIFF archives and large generated arrays
+*.mat
+*.tif
+*.tiff
+*.zip
+*.npy
+*.npz
+
+# Python caches and environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# IDE and OS metadata
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
