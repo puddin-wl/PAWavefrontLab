@@ -1,185 +1,288 @@
-# Copyright (c) 2023 
-# Brandon Y. Feng, University of Maryland, College Park and Rice University. All rights reserved
+#!/usr/bin/env python3
+# Copyright (c) 2023 Brandon Y. Feng, University of Maryland, College Park and Rice University.
+"""Reconstruct a NeuWS scene from modulated MATLAB measurements."""
 
-import os, time, imageio, tqdm, argparse
+from __future__ import annotations
+
+import argparse
+import json
+import time
+from pathlib import Path
+
+import imageio.v2 as imageio
 import matplotlib.pyplot as plt
-import scipy.io as sio
 import numpy as np
-
+import scipy.io as sio
 import torch
-print(f"Using PyTorch Version: {torch.__version__}")
-torch.manual_seed(0)
-torch.backends.cudnn.benchmark = False
-torch.cuda.empty_cache()
-
 import torch.nn.functional as F
+import tqdm
 from torch.fft import fft2, fftshift
-from networks import *
-from utils import *
-from dataset import *
+from torch.utils.data import DataLoader
 
-DEVICE = 'cuda'
+from dataset import BatchDataset
+from networks import MovingDiffuse, StaticDiffuseNet
+from utils import ang_to_unit
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--root_dir', default='.', type=str)
-    parser.add_argument('--data_dir', default='resized', type=str)
-    parser.add_argument('--scene_name', default='0609', type=str)
-    parser.add_argument('--num_epochs', default=1000, type=int)
-    parser.add_argument('--num_t', default=100, type=int)
-    parser.add_argument('--batch_size', default=8, type=int)
-    parser.add_argument('--width', default=256, type=int)
-    parser.add_argument('--vis_freq', default=1000, type=int)
-    parser.add_argument('--init_lr', default=1e-3, type=float)
-    parser.add_argument('--final_lr', default=1e-3, type=float)
-    parser.add_argument('--silence_tqdm', action='store_true')
-    parser.add_argument('--save_per_frame', action='store_true')
-    parser.add_argument('--static_phase', action='store_true')
-    parser.add_argument('--num_workers', default=0, type=int)
-    parser.add_argument('--max_intensity', default=0, type=float)
-    parser.add_argument('--im_prefix', default='SLM_raw', type=str)
-    parser.add_argument('--zero_freq', default=-1, type=int)
-    parser.add_argument('--phs_layers', default=2, type=int)
-    parser.add_argument('--dynamic_scene', action='store_true')
 
-    args = parser.parse_args()
-    PSF_size = args.width
+def _resolve_device(value: str) -> torch.device:
+    if value == "auto":
+        value = "cuda" if torch.cuda.is_available() else "cpu"
+    device = torch.device(value)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA was requested, but torch.cuda.is_available() is false.")
+    return device
 
-    ############
-    # Setup output folders
-    data_dir = f'{args.root_dir}/{args.data_dir}'
-    vis_dir = f'{args.root_dir}/vis/{args.scene_name}'
-    os.makedirs(f'{args.root_dir}/vis', exist_ok=True)
-    os.makedirs(vis_dir, exist_ok=True)
-    os.makedirs(f'{vis_dir}/final', exist_ok=True)
-    print(f'Saving output at: {vis_dir}')
+
+def _time_coordinate(indices: torch.Tensor, count: int) -> torch.Tensor:
+    if count <= 1:
+        return torch.zeros_like(indices, dtype=torch.float32) - 0.5
+    return indices.float() / (count - 1) - 0.5
+
+
+def _normalize_for_display(value: torch.Tensor) -> np.ndarray:
+    value = value.detach().cpu().float()
+    minimum, maximum = value.min(), value.max()
+    if float(maximum - minimum) <= 1e-12:
+        return np.zeros(value.shape, dtype=np.float32)
+    return ((value - minimum) / (maximum - minimum)).numpy()
+
+
+def _save_progress(
+    vis_dir: Path,
+    epoch: int,
+    iteration: int,
+    y_batch,
+    y,
+    kernel,
+    sim_g,
+    sim_phs,
+    image_estimate,
+    aperture,
+) -> None:
+    with torch.no_grad():
+        image = torch.clamp(image_estimate[0:1], 0, 1)
+        aberrated_psf = fftshift(
+            fft2(aperture * sim_g[0:1], norm="forward"), dim=(-2, -1)
+        ).abs().square()
+        convolved = F.conv2d(image, aberrated_psf, padding="same").squeeze()
+    fig, axes = plt.subplots(1, 6, figsize=(24, 4))
+    panels = (
+        (y_batch[0].detach().cpu().squeeze(), "Real Measurement", "gray"),
+        (y[0].detach().cpu().squeeze(), "Sim Measurement", "gray"),
+        (image.detach().cpu().squeeze(), "I_est", "gray"),
+        (sim_phs[0].detach().cpu().squeeze(), "Estimated Phase", "rainbow"),
+        (kernel[0].detach().cpu().squeeze(), "Post-SLM PSF", "gray"),
+        (convolved.detach().cpu(), "Aberrated I_est", "gray"),
+    )
+    for axis, (panel, title, cmap) in zip(axes, panels):
+        axis.imshow(panel, cmap=cmap)
+        axis.set_title(title)
+        axis.axis("off")
+    fig.tight_layout()
+    fig.savefig(vis_dir / f"e_{epoch}_it_{iteration}.jpg", dpi=120)
+    plt.close(fig)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root_dir", default=".")
+    parser.add_argument("--data_dir", default="resized")
+    parser.add_argument("--scene_name", default="0609")
+    parser.add_argument("--num_epochs", default=1000, type=int)
+    parser.add_argument("--num_t", type=int, default=None)
+    parser.add_argument("--batch_size", default=8, type=int)
+    parser.add_argument("--width", type=int, default=None)
+    parser.add_argument("--vis_freq", default=1000, type=int)
+    parser.add_argument("--init_lr", default=1e-3, type=float)
+    parser.add_argument("--final_lr", default=1e-3, type=float)
+    parser.add_argument("--silence_tqdm", action="store_true")
+    parser.add_argument("--save_per_frame", action="store_true")
+    parser.add_argument("--static_phase", action="store_true")
+    parser.add_argument("--num_workers", default=0, type=int)
+    parser.add_argument("--max_intensity", default=0, type=float)
+    parser.add_argument("--im_prefix", default="SLM_raw")
+    parser.add_argument("--slm_prefix", default="SLM_sim")
+    parser.add_argument("--zero_freq", default=-1, type=int)
+    parser.add_argument("--phs_layers", default=2, type=int)
+    parser.add_argument("--dynamic_scene", action="store_true")
+    parser.add_argument("--device", default="auto")
+    parser.add_argument("--seed", default=0, type=int)
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    if args.num_epochs <= 0 or args.batch_size <= 0:
+        raise ValueError("--num_epochs and --batch_size must be positive.")
+    root_dir = Path(args.root_dir).expanduser().resolve()
+    requested_data_dir = Path(args.data_dir).expanduser()
+    data_dir = requested_data_dir.resolve() if requested_data_dir.is_absolute() else root_dir / requested_data_dir
+    vis_dir = root_dir / "vis" / args.scene_name
+    final_dir = vis_dir / "final"
+    final_dir.mkdir(parents=True, exist_ok=True)
+    per_frame_dir = final_dir / "per_frame"
     if args.save_per_frame:
-        os.makedirs(f'{vis_dir}/final/per_frame', exist_ok=True)
+        per_frame_dir.mkdir(exist_ok=True)
+    print(f"Saving output at: {vis_dir}")
 
-    ############
-    # Training preparations
-    dset = BatchDataset(data_dir, num=args.num_t, im_prefix=args.im_prefix, max_intensity=args.max_intensity, zero_freq=args.zero_freq)
-    x_batches = torch.cat(dset.xs, axis=0).unsqueeze(1).to(DEVICE)
-    y_batches = torch.stack(dset.ys, axis=0).to(DEVICE)
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    torch.backends.cudnn.benchmark = False
+    device = _resolve_device(args.device)
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+    print(f"Using PyTorch {torch.__version__} on {device}")
 
-    if args.dynamic_scene:
-        net = MovingDiffuse(width=args.width, PSF_size=PSF_size, use_FFT=True, bsize=args.batch_size, phs_layers=args.phs_layers, static_phase=args.static_phase)
-    else:
-        net = StaticDiffuseNet(width=args.width, PSF_size=PSF_size, use_FFT=True, bsize=args.batch_size, phs_layers=args.phs_layers, static_phase=args.static_phase)
+    dataset = BatchDataset(
+        data_dir,
+        num=args.num_t,
+        im_prefix=args.im_prefix,
+        slm_prefix=args.slm_prefix,
+        max_intensity=args.max_intensity,
+        zero_freq=args.zero_freq,
+    )
+    width = dataset.width
+    if args.width is not None and args.width != width:
+        raise ValueError(
+            f"--width {args.width} does not match inferred measurement size {width}."
+        )
+    loader_generator = torch.Generator().manual_seed(args.seed)
+    loader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=device.type == "cuda",
+        generator=loader_generator,
+    )
+    network_class = MovingDiffuse if args.dynamic_scene else StaticDiffuseNet
+    network = network_class(
+        width=width,
+        PSF_size=width,
+        use_FFT=True,
+        bsize=args.batch_size,
+        phs_layers=args.phs_layers,
+        static_phase=args.static_phase,
+    ).to(device)
+    image_optimizer = torch.optim.Adam(network.g_im.parameters(), lr=args.init_lr)
+    phase_optimizer = torch.optim.Adam(network.g_g.parameters(), lr=args.init_lr)
+    image_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        image_optimizer, T_max=args.num_epochs, eta_min=args.final_lr
+    )
+    phase_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        phase_optimizer, T_max=args.num_epochs, eta_min=args.final_lr
+    )
 
-    net = net.to(DEVICE)
-
-    im_opt = torch.optim.Adam(net.g_im.parameters(), lr=args.init_lr)
-    ph_opt = torch.optim.Adam(net.g_g.parameters(), lr=args.init_lr)
-    im_sche = torch.optim.lr_scheduler.CosineAnnealingLR(im_opt, T_max = args.num_epochs, eta_min=args.final_lr)
-    ph_sche = torch.optim.lr_scheduler.CosineAnnealingLR(ph_opt, T_max = args.num_epochs, eta_min=args.final_lr)
-
-    total_it = 0
-    t = tqdm.trange(args.num_epochs, disable=args.silence_tqdm)
-
-    ############
-    # Training loop
-    t0 = time.time()
-    for epoch in t:
-        idxs = torch.randperm(len(dset)).long().to(DEVICE)
-        for it in range(0, len(dset), args.batch_size):
-            idx = idxs[it:it+args.batch_size]
-            x_batch, y_batch = x_batches[idx], y_batches[idx]
-            cur_t = (idx / (args.num_t - 1)) - 0.5
-            im_opt.zero_grad();  ph_opt.zero_grad()
-
-            y, _kernel, sim_g, sim_phs, I_est = net(x_batch, cur_t)
-
+    total_iteration = 0
+    loss_history = []
+    progress = tqdm.trange(args.num_epochs, disable=args.silence_tqdm)
+    start_time = time.time()
+    for epoch in progress:
+        epoch_losses = []
+        for iteration, (x_batch, y_batch, indices) in enumerate(loader):
+            x_batch = x_batch.to(device, non_blocking=True)
+            y_batch = y_batch.to(device, non_blocking=True)
+            indices = indices.to(device)
+            current_time = _time_coordinate(indices, len(dataset))
+            image_optimizer.zero_grad(set_to_none=True)
+            phase_optimizer.zero_grad(set_to_none=True)
+            y, kernel, sim_g, sim_phs, image_estimate = network(x_batch, current_time)
+            y = y.reshape_as(y_batch)
             mse_loss = F.mse_loss(y, y_batch)
+            mse_loss.backward()
+            phase_optimizer.step()
+            image_optimizer.step()
+            epoch_losses.append(float(mse_loss.detach()))
+            progress.set_postfix(MSE=f"{epoch_losses[-1]:.4e}")
 
-            loss = mse_loss
-            loss.backward()
+            if args.vis_freq > 0 and total_iteration % args.vis_freq == 0:
+                _save_progress(
+                    vis_dir,
+                    epoch,
+                    iteration,
+                    y_batch,
+                    y,
+                    kernel,
+                    sim_g,
+                    sim_phs,
+                    image_estimate,
+                    dataset.a_slm.to(device)[None, None],
+                )
+                sio.savemat(
+                    vis_dir / "Sim_Phase.mat",
+                    {"angle": sim_phs.detach().cpu().squeeze().numpy()},
+                )
+            total_iteration += 1
+        loss_history.append(float(np.mean(epoch_losses)))
+        image_scheduler.step()
+        phase_scheduler.step()
+    elapsed = time.time() - start_time
+    print(f"Training took {elapsed:.2f} seconds.")
 
-            ph_opt.step()
-            im_opt.step()
-
-            t.set_postfix(MSE=f'{mse_loss.item():.4e}')
-
-            if args.vis_freq > 0 and (total_it % args.vis_freq) == 0:
-                y, _kernel, sim_g, sim_phs, I_est = net(x_batch, torch.zeros_like(cur_t) - 0.5)
-
-                Abe_est = fftshift(fft2(dset.a_slm.to(DEVICE) * sim_g, norm="forward"), dim=[-2, -1]).abs() ** 2
-                if I_est.shape[0] > 1:
-                    I_est = I_est[0:1]
-                I_est = torch.clamp(I_est, 0, 1)
-                yy = F.conv2d(I_est, Abe_est, padding='same').squeeze(0)
-
-                fig, ax = plt.subplots(1, 6, figsize=(48, 8))
-                ax[0].imshow(y_batch[0].detach().cpu().squeeze(), vmin=0, vmax=1, cmap='gray')
-                ax[0].axis('off')
-                ax[0].title.set_text('Real Measurement')
-                ax[1].imshow(y[0].detach().cpu().squeeze(), vmin=0, vmax=1, cmap='gray')
-                ax[1].axis('off')
-                ax[1].title.set_text('Sim Measurement')
-                ax[2].imshow(I_est.detach().cpu().squeeze(), cmap='gray')
-                ax[2].axis('off')
-                ax[2].title.set_text('I_est')
-                ax[3].imshow(sim_phs[0].detach().cpu().squeeze() % np.pi, cmap='rainbow')
-                ax[3].axis('off')
-                ax[3].title.set_text(f'Sim Phase Error at t={idx[0]}')
-                ax[4].imshow(_kernel[0].detach().cpu().squeeze(), cmap='gray')
-                ax[4].axis('off')
-                ax[4].title.set_text('Sim post-SLM PSF')
-                ax[5].imshow(yy[0].squeeze().detach().cpu(), vmin=0, vmax=1, cmap='gray')
-                ax[5].axis('off')
-                ax[5].title.set_text(f'Abe_est * I_est at t={idx[0]}')
-                plt.savefig(f'{vis_dir}/e_{epoch}_it_{it}.jpg')
-                plt.clf()
-                sio.savemat(f'{vis_dir}/Sim_Phase.mat', {'angle': sim_phs.detach().cpu().squeeze().numpy()})
-
-            total_it += 1
-
-        im_sche.step()
-        ph_sche.step()
-
-    t1 = time.time()
-    print(f'Training takes {t1 - t0} seconds.')
-
-    ############
-    # Export final results
-    out_errs = []
-    out_abes = []
-    out_Iest = []
-    for t in range(args.num_t):
-        cur_t = (t / (args.num_t - 1)) - 0.5
-        cur_t = torch.FloatTensor([cur_t]).to(DEVICE)
-
-        I_est, sim_g, sim_phs = net.get_estimates(cur_t)
-        I_est = torch.clamp(I_est, 0, 1).squeeze().detach().cpu().numpy()
-
-        out_Iest.append(I_est)
-
-        est_g = sim_g.detach().cpu().squeeze().numpy()
-        out_errs.append(np.uint8(ang_to_unit(np.angle(est_g)) * 255))
-        abe = sim_phs[0].detach().cpu().squeeze()
-        abe = (abe - abe.min()) / (abe.max() - abe.min())
-        out_abes.append(np.uint8(abe * 255))
-        if args.save_per_frame and not args.static_phase:
-          sio.savemat(f'{vis_dir}/final/per_frame/sim_phase_{t}.mat', {'angle': sim_phs.detach().cpu().squeeze().numpy()})
+    output_errors = []
+    output_aberrations = []
+    output_images = []
+    final_field = None
+    final_phase = None
+    network.eval()
+    with torch.no_grad():
+        for frame in range(len(dataset)):
+            current_time = _time_coordinate(
+                torch.tensor([frame], dtype=torch.long, device=device), len(dataset)
+            )
+            image_estimate, sim_g, sim_phs = network.get_estimates(current_time)
+            image_np = torch.clamp(image_estimate, 0, 1).squeeze().cpu().numpy()
+            output_images.append(image_np)
+            field_np = sim_g.squeeze().cpu().numpy()
+            phase_np = sim_phs.squeeze().cpu().numpy()
+            output_errors.append(np.uint8(np.clip(ang_to_unit(np.angle(field_np)), 0, 1) * 255))
+            output_aberrations.append(np.uint8(_normalize_for_display(sim_phs.squeeze()) * 255))
+            final_field, final_phase = field_np, phase_np
+            if args.save_per_frame and not args.static_phase:
+                sio.savemat(per_frame_dir / f"sim_phase_{frame}.mat", {"angle": phase_np})
 
     if args.dynamic_scene:
-        out_Iest = [np.uint8(im * 255) for im in out_Iest]
-        imageio.mimsave(f'{vis_dir}/final/final_I.gif', out_Iest, duration=1000*1./30)
+        imageio.mimsave(
+            final_dir / "final_I.gif",
+            [np.uint8(np.clip(image, 0, 1) * 255) for image in output_images],
+            duration=1.0 / 30,
+        )
     else:
-        I_est = np.uint8(I_est.squeeze() * 255)
-        imageio.imsave(f'{vis_dir}/final/final_I_est.png', I_est)
+        imageio.imwrite(final_dir / "final_I_est.png", np.uint8(output_images[-1] * 255))
+    sio.savemat(final_dir / "final_I_est.mat", {"image": output_images[-1]})
+    sio.savemat(
+        final_dir / "final_aberration.mat",
+        {"field": final_field, "phase": final_phase},
+    )
 
     if args.static_phase:
-        imageio.imsave(f'{vis_dir}/final/final_aberrations_angle.png', out_errs[0])
-        imageio.imsave(f'{vis_dir}/final/final_aberrations.png', out_abes[0])
+        imageio.imwrite(final_dir / "final_aberrations_angle.png", output_errors[0])
+        imageio.imwrite(final_dir / "final_aberrations.png", output_aberrations[0])
     else:
-        imageio.mimsave(f'{vis_dir}/final/final_aberrations_angle_grey.gif', out_errs, duration=1000*1./30)
-        imageio.mimsave(f'{vis_dir}/final/final_aberrations.gif', out_abes, duration=1000*1./30)
+        imageio.mimsave(final_dir / "final_aberrations_angle_grey.gif", output_errors, duration=1.0 / 30)
+        imageio.mimsave(final_dir / "final_aberrations.gif", output_aberrations, duration=1.0 / 30)
 
+    cmap = plt.get_cmap("rainbow")
+    colored_errors = [np.uint8(cmap(error / 255.0)[..., :3] * 255) for error in output_errors]
+    if args.save_per_frame:
+        for frame, colored in enumerate(colored_errors):
+            imageio.imwrite(per_frame_dir / f"{frame:03d}.jpg", colored)
+    imageio.mimsave(final_dir / "final_aberrations_angle.gif", colored_errors, duration=1.0 / 30)
+    summary = {
+        "data_dir": str(data_dir),
+        "device": str(device),
+        "width": width,
+        "num_frames": len(dataset),
+        "num_epochs": args.num_epochs,
+        "static_phase": args.static_phase,
+        "loss_history": loss_history,
+        "elapsed_seconds": elapsed,
+    }
+    (final_dir / "training_summary.json").write_text(
+        json.dumps(summary, indent=2) + "\n", encoding="utf-8"
+    )
     print("Training concludes.")
 
-    colored_err = []
-    for i, a in enumerate(out_errs):
-        plt.imsave(f'{vis_dir}/final/per_frame/{i:03d}.jpg', a, cmap='rainbow')
-        colored_err.append(imageio.imread(f'{vis_dir}/final/per_frame/{i:03d}.jpg'))
-    imageio.mimsave(f'{vis_dir}/final/final_aberrations_angle.gif', colored_err, duration=1000*1./30)
+
+if __name__ == "__main__":
+    main()
