@@ -38,6 +38,11 @@ def _positive_even(value: int, name: str) -> int:
 
 
 def default_aperture_height(size: int) -> int:
+    """Return the full illuminated height used by this project."""
+    return _positive_even(size, "size")
+
+
+def paper_aperture_height(size: int) -> int:
     """Return the nearest even height to the paper's 9/16 aperture ratio."""
     size = _positive_even(size, "size")
     height = int(2 * math.floor((size * PAPER_APERTURE_RATIO) / 2 + 0.5))
@@ -185,11 +190,13 @@ def make_static_aberration(
 
     if mode == "zernike":
         coefficients = rng.normal(0.0, sigma, size=num_modes).astype(np.float32)
-        basis = zernike_basis_torch(num_modes, size, device=device)
-        coeff_tensor = torch.as_tensor(coefficients, device=device)
-        phase = torch.einsum("m,mhw->hw", coeff_tensor, basis)
-        field = mask * torch.exp(1j * phase)
-        return field.to(torch.complex64), coefficients
+        field, _ = zernike_aberration_from_coefficients(
+            coefficients,
+            size,
+            geometry.aperture_height,
+            device=device,
+        )
+        return field, coefficients
 
     if mode == "complex-gaussian":
         real = rng.normal(size=(size, size)).astype(np.float32)
@@ -204,6 +211,30 @@ def make_static_aberration(
     raise ValueError(
         f"Unknown aberration mode {mode!r}; expected 'zernike' or 'complex-gaussian'."
     )
+
+
+def zernike_aberration_from_coefficients(
+    coefficients: np.ndarray,
+    size: int,
+    aperture_height: Optional[int] = None,
+    *,
+    device: Optional[torch.device | str] = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build ``mask * exp(+1j * phase)`` from explicit Noll coefficients."""
+    coefficients = np.asarray(coefficients, dtype=np.float32).reshape(-1)
+    if coefficients.size == 0:
+        raise ValueError("At least one Zernike coefficient is required.")
+    if not np.isfinite(coefficients).all():
+        raise ValueError("Zernike coefficients must be finite.")
+    geometry = validate_geometry(size, aperture_height)
+    basis = zernike_basis_torch(coefficients.size, geometry.size, device=device)
+    coefficient_tensor = torch.as_tensor(coefficients, device=device)
+    phase = torch.einsum("m,mhw->hw", coefficient_tensor, basis)
+    mask = aperture_mask(
+        geometry.size, geometry.aperture_height, device=device
+    )
+    field = mask * torch.exp(1j * phase)
+    return field.to(torch.complex64), phase.to(torch.float32)
 
 
 def pupil_psf(aberration: torch.Tensor, slm_field: torch.Tensor) -> torch.Tensor:

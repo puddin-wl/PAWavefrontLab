@@ -32,9 +32,41 @@ python -m pip install -r requirements.txt
 
 The NVIDIA Windows driver is exposed to WSL; it should not be installed again inside WSL. The Linux CUDA Toolkit and cuDNN can coexist with that driver.
 
-## Generate paper-style SLM patterns
+## Program 1: apply a specified aberration to one image
 
-The paper default is a `256×256` computational field with a centered `144×256` active SLM aperture. Each pattern is a weighted sum of AOtools Noll modes 1–15, including Piston/Tip/Tilt, with independent Gaussian coefficients of default standard deviation `5 rad`.
+This presentation-oriented program uses the full square field and requires explicit AOtools Noll coefficients. Coefficients are in radians. For example, Noll 4 is Defocus and Noll 7 is one Coma direction:
+
+```bash
+python tools/apply_aberration.py \
+  --input-image /path/to/object.tif \
+  --output-dir outputs/single_aberration \
+  --size 256 \
+  --coefficient 4=1.5 \
+  --coefficient 7=-0.25 \
+  --device cuda
+```
+
+Unspecified Noll terms are zero. Two other coefficient input formats are supported:
+
+```bash
+# Dense Noll 1..N list; it is zero-padded to 28 terms.
+python tools/apply_aberration.py ... \
+  --coefficients "0,0,0,1.5,0,0,-0.25"
+
+# A .npy, JSON, CSV, or text file.
+python tools/apply_aberration.py ... \
+  --coefficients-file coefficients.npy
+```
+
+The program saves the processed input, 16-bit aberrated PNG, wrapped phase PNG, exact NumPy arrays, and `aberration_result.mat`. The MATLAB file contains `object_image`, `aberrated_image`, `zernike_coefficients`, `aberration_phase`, `aberration_field`, `aberration_amplitude`, and `psf`. `manifest.json` records the complete coefficient list and conventions.
+
+## Program 2: generate a NeuWS dataset
+
+The dataset program deliberately keeps its aberration generation independent from Program 1. It samples one static unknown aberration from the selected distribution, then varies only the SLM modulation across frames. The sampled coefficients are saved in `ground_truth.mat` for inspection, but are not supplied through the single-image coefficient interface.
+
+### Generate SLM patterns only
+
+The project default is a fully illuminated square field. Each pattern is a weighted sum of AOtools Noll modes 1–15, including Piston/Tip/Tilt, with independent Gaussian coefficients of default standard deviation `5 rad`.
 
 ```bash
 python tools/generate_neuws_data.py patterns \
@@ -42,12 +74,12 @@ python tools/generate_neuws_data.py patterns \
   --size 256 --num-frames 100 --seed 0
 ```
 
-Any positive even square size is supported. The default active height is the nearest even value to `size×9/16`, or it can be set explicitly:
+Any positive even square size is supported. By default `aperture_height=size`, so no region is masked. The paper's original `144×256` geometry remains available only when explicitly requested:
 
 ```bash
 python tools/generate_neuws_data.py patterns \
-  --output-dir data/patterns_512 \
-  --size 512 --aperture-height 288 --num-frames 100
+  --output-dir data/paper_patterns \
+  --size 256 --aperture-height 144 --num-frames 100
 ```
 
 Each run exports:
@@ -60,7 +92,7 @@ Each run exports:
 
 The PNG files are not calibrated for a particular SLM. Device-specific LUT, gamma and voltage conversion must be added before hardware use.
 
-## Generate a static closed-loop simulation
+### Generate the measurements
 
 The input is converted to grayscale, center-cropped to a square, resized, and normalized to `[0,1]`. The object and unknown aberration remain static; only the SLM pattern changes per frame.
 
@@ -95,7 +127,7 @@ aperture * exp(-1j * proj_sim)
 
 ## Static reconstruction
 
-The loader infers the square measurement size and centered active aperture from the files. If `--num_t` is omitted, all continuously numbered samples are used. If `--width` is provided, it must match the inferred size. Frames are loaded from disk batch by batch rather than copied to the GPU all at once.
+The loader infers the square measurement size and active area from the files. Current project datasets use the full field by default. If `--num_t` is omitted, all continuously numbered samples are used. If `--width` is provided, it must match the inferred size. Frames are loaded from disk batch by batch rather than copied to the GPU all at once.
 
 ```bash
 python recon_exp_data.py \

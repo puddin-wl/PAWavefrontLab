@@ -17,12 +17,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ClosedLoopTests(unittest.TestCase):
-    def _generate(self, directory: Path, mode: str = "zernike", seed: int = 4):
+    def _generate(
+        self,
+        directory: Path,
+        mode: str = "zernike",
+        seed: int = 4,
+        extra_arguments=None,
+    ):
         image = np.arange(20 * 28, dtype=np.uint16).reshape(20, 28)
         image_path = directory.parent / f"object-{mode}-{seed}.png"
         Image.fromarray(image).save(image_path)
-        subprocess.run(
-            [
+        command = [
                 sys.executable,
                 str(ROOT / "tools" / "generate_neuws_data.py"),
                 "simulate",
@@ -33,7 +38,10 @@ class ClosedLoopTests(unittest.TestCase):
                 "--aberration-mode", mode,
                 "--seed", str(seed),
                 "--device", "cpu",
-            ],
+            ]
+        command.extend(extra_arguments or [])
+        subprocess.run(
+            command,
             check=True,
             cwd=ROOT,
             capture_output=True,
@@ -62,17 +70,58 @@ class ClosedLoopTests(unittest.TestCase):
                 sio.loadmat(first / "SLM_raw1.mat")["imsdata"],
                 sio.loadmat(different / "SLM_raw1.mat")["imsdata"],
             ))
-            self.assertEqual(sio.loadmat(first / "SLM_sim1.mat")["proj_sim"].shape, (10, 16))
+            self.assertEqual(sio.loadmat(first / "SLM_sim1.mat")["proj_sim"].shape, (16, 16))
             self.assertEqual(sio.loadmat(first / "SLM_raw1.mat")["imsdata"].shape, (16, 16))
             manifest = json.loads((first / "manifest.json").read_text())
             self.assertEqual(manifest["phase_sign"], -1)
             dataset = BatchDataset(first)
             slm, measurement, _ = dataset[0]
             phase = torch.from_numpy(sio.loadmat(first / "SLM_sim1.mat")["proj_sim"])
-            self.assertTrue(torch.allclose(slm[:, 3:13], torch.exp(-1j * phase)))
+            self.assertTrue(torch.allclose(slm, torch.exp(-1j * phase)))
             self.assertEqual(tuple(measurement.shape), (16, 16))
             gaussian_field = sio.loadmat(gaussian / "ground_truth.mat")["aberration_field"]
             self.assertTrue(np.isfinite(gaussian_field).all())
+
+    def test_single_image_program_saves_aberration_and_result(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            image_path = root / "object.png"
+            output_dir = root / "single"
+            Image.fromarray(np.arange(18 * 26, dtype=np.uint16).reshape(18, 26)).save(
+                image_path
+            )
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "tools" / "apply_aberration.py"),
+                    "--input-image", str(image_path),
+                    "--output-dir", str(output_dir),
+                    "--size", "16",
+                    "--coefficient", "4=1.5",
+                    "--coefficient", "7=-0.25",
+                    "--device", "cpu",
+                ],
+                check=True,
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+            )
+            result = sio.loadmat(output_dir / "aberration_result.mat")
+            self.assertEqual(result["aberrated_image"].shape, (16, 16))
+            self.assertEqual(result["aberration_phase"].shape, (16, 16))
+            self.assertEqual(result["psf"].shape, (16, 16))
+            self.assertAlmostEqual(float(result["psf"].sum()), 1.0, places=5)
+            self.assertAlmostEqual(float(result["zernike_coefficients"].squeeze()[3]), 1.5)
+            for filename in (
+                "aberrated_image.png",
+                "aberrated_image.npy",
+                "aberration_phase.npy",
+                "aberration_field.npy",
+                "zernike_coefficients.npy",
+                "comparison.png",
+                "manifest.json",
+            ):
+                self.assertTrue((output_dir / filename).is_file(), filename)
 
     def test_static_training_decreases_loss_without_per_frame_output(self):
         with tempfile.TemporaryDirectory() as temporary:

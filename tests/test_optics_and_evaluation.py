@@ -10,6 +10,7 @@ from optics import (
     aperture_mask,
     default_aperture_height,
     make_static_aberration,
+    paper_aperture_height,
     sample_slm_coefficients,
     synthesize_slm_patterns,
     validate_geometry,
@@ -29,9 +30,11 @@ class OpticsTests(unittest.TestCase):
         self.assertEqual([zernIndex(index) for index in range(1, 16)], expected)
 
     def test_paper_geometry_and_even_validation(self):
-        self.assertEqual(default_aperture_height(256), 144)
-        self.assertEqual(default_aperture_height(1000), 562)
-        self.assertEqual(validate_geometry(32).aperture_height, 18)
+        self.assertEqual(default_aperture_height(256), 256)
+        self.assertEqual(default_aperture_height(1000), 1000)
+        self.assertEqual(paper_aperture_height(256), 144)
+        self.assertEqual(paper_aperture_height(1000), 562)
+        self.assertEqual(validate_geometry(32).aperture_height, 32)
         with self.assertRaises(ValueError):
             validate_geometry(255)
         with self.assertRaises(ValueError):

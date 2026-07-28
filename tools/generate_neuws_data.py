@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate NeuWS paper-style SLM patterns and synthetic measurements."""
+"""Generate NeuWS SLM patterns and synthetic measurements."""
 
 from __future__ import annotations
 
@@ -12,12 +12,16 @@ from pathlib import Path
 import numpy as np
 import scipy.io as sio
 import torch
-from PIL import Image
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from image_utils import (  # noqa: E402
+    read_normalized_square,
+    resolve_device,
+    write_wrapped_phase_png,
+)
 from optics import (  # noqa: E402
     PAPER_PHASE_SIGN,
     crop_to_aperture,
@@ -30,51 +34,9 @@ from optics import (  # noqa: E402
 )
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SLM_NUM_MODES = 15
 ABERRATION_NUM_MODES = 28
-
-
-def _device(value: str) -> torch.device:
-    if value == "auto":
-        value = "cuda" if torch.cuda.is_available() else "cpu"
-    device = torch.device(value)
-    if device.type == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA was requested, but torch.cuda.is_available() is false.")
-    return device
-
-
-def _read_object(path: Path, size: int) -> np.ndarray:
-    if not path.is_file():
-        raise FileNotFoundError(f"Input image does not exist: {path}")
-    with Image.open(path) as image:
-        array = np.asarray(image)
-    if array.ndim == 3:
-        rgb = array[..., :3].astype(np.float32)
-        array = 0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]
-    elif array.ndim > 3:
-        array = np.asarray(array[0])
-    if array.ndim != 2:
-        raise ValueError(f"Expected a grayscale or RGB image, got shape {array.shape}.")
-    height, width = array.shape
-    side = min(height, width)
-    top = (height - side) // 2
-    left = (width - side) // 2
-    array = array[top : top + side, left : left + side].astype(np.float32)
-    if not np.isfinite(array).all():
-        raise ValueError("Input image contains NaN or infinite values.")
-    minimum, maximum = float(array.min()), float(array.max())
-    if maximum <= minimum:
-        raise ValueError("Input image must have a non-zero intensity range.")
-    array = (array - minimum) / (maximum - minimum)
-    image = Image.fromarray(array).resize((size, size), Image.Resampling.BICUBIC)
-    return np.clip(np.asarray(image, dtype=np.float32), 0.0, 1.0)
-
-
-def _write_phase_png(path: Path, phase: np.ndarray) -> None:
-    wrapped = np.mod(phase, 2.0 * math.pi)
-    encoded = np.rint(wrapped * (65535.0 / (2.0 * math.pi))).astype(np.uint16)
-    Image.fromarray(encoded).save(path)
 
 
 def _common_manifest(args, geometry, coefficients: np.ndarray) -> dict:
@@ -131,7 +93,7 @@ def _prepare_patterns(args, output_dir: Path):
             {"proj_sim": active_phase},
             do_compression=True,
         )
-        _write_phase_png(png_dir / f"SLM_sim{index}.png", active_phase)
+        write_wrapped_phase_png(png_dir / f"SLM_sim{index}.png", active_phase)
     patterns.flush()
     np.save(output_dir / "slm_coefficients.npy", coefficients)
     return geometry, coefficients, patterns
@@ -158,8 +120,8 @@ def generate_patterns(args) -> None:
 def generate_simulation(args) -> None:
     output_dir = Path(args.output_dir).expanduser().resolve()
     geometry, coefficients, patterns = _prepare_patterns(args, output_dir)
-    device = _device(args.device)
-    object_image = _read_object(Path(args.input_image).expanduser(), geometry.size)
+    device = resolve_device(args.device)
+    object_image = read_normalized_square(args.input_image, geometry.size)
     aberration, aberration_coefficients = make_static_aberration(
         args.aberration_mode,
         geometry.size,
@@ -250,7 +212,7 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    patterns = subparsers.add_parser("patterns", help="Generate paper-style SLM patterns.")
+    patterns = subparsers.add_parser("patterns", help="Generate AOtools SLM patterns.")
     _add_common_arguments(patterns)
     patterns.set_defaults(func=generate_patterns)
     simulate = subparsers.add_parser(
