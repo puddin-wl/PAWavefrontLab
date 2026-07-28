@@ -2,7 +2,6 @@
 # Brandon Y. Feng, University of Maryland, College Park and Rice University. All rights reserved
 
 import os, tqdm, math, imageio
-from aotools.functions import zernikeArray
 import numpy as np
 import h5py
 
@@ -14,6 +13,8 @@ from torch.fft import fft2, fftshift, irfftn, rfftn, ifftshift
 
 from PIL import Image
 import matplotlib.pyplot as plt
+
+from optics import zernike_basis_torch
 
 ang_to_unit = lambda x : ((x / np.pi) + 1) / 2
 
@@ -133,11 +134,9 @@ def crop_image(field, target_shape, pytorch=True, stacked_complex=True):
         return field
 
 def compute_zernike_basis(num_polynomials, field_res):
-    zernike_diam = int(np.ceil(np.sqrt(field_res[0]**2 + field_res[1]**2)))
-    zernike = zernikeArray(num_polynomials, zernike_diam)
-    zernike = crop_image(zernike, field_res, pytorch=False)
-    zernike = torch.FloatTensor(zernike)
-    return zernike
+    if field_res[0] != field_res[1]:
+        raise ValueError(f'Only square Zernike fields are supported, got {field_res}.')
+    return zernike_basis_torch(num_polynomials, field_res[0])
 
 # https://github.com/fkodom/fft-conv-pytorch
 
