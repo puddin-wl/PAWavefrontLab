@@ -1,0 +1,615 @@
+"""Reusable stages for the static NeuWS simulation and reconstruction workflow."""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+import matplotlib.pyplot as plt
+import numpy as np
+import scipy.io as sio
+import torch
+
+from evaluation import evaluate_images, evaluate_phases
+from image_utils import (
+    read_normalized_square,
+    resolve_device,
+    write_unit_png,
+    write_wrapped_phase_png,
+)
+from optics import (
+    aperture_mask,
+    sample_slm_coefficients,
+    simulate_measurements,
+    slm_complex_field,
+    validate_geometry,
+    zernike_aberration_from_coefficients,
+    zernike_basis_numpy,
+)
+
+
+WORKFLOW_SCHEMA_VERSION = 1
+SYSTEM_NUM_MODES = 28
+
+
+@dataclass(frozen=True)
+class SimulationSettings:
+    """All settings shared by the five independently runnable stages."""
+
+    project_root: Path
+    input_image: Path
+    data_dir: Path
+    result_root: Path
+    scene_name: str
+    size: int = 256
+    aperture_height: Optional[int] = None
+    num_frames: int = 50
+    system_noll_start: int = 4
+    system_noll_end: int = 15
+    system_sigma: float = 0.6
+    system_seed: int = 20260730
+    slm_num_modes: int = 15
+    slm_sigma: float = 5.0
+    slm_seed: int = 20260731
+    phase_sign: int = -1
+    noise_std: float = 0.0
+    noise_seed: int = 20260732
+    simulation_batch_size: int = 8
+    generation_device: str = "cuda"
+    training_device: str = "cuda"
+    training_epochs: int = 1000
+    training_batch_size: int = 8
+    phase_layers: int = 4
+    initial_learning_rate: float = 1e-3
+    final_learning_rate: float = 1e-3
+    visualization_frequency: int = 1000
+    overwrite: bool = False
+    silence_tqdm: bool = False
+
+    @property
+    def reference_dir(self) -> Path:
+        return self.data_dir / "reference"
+
+    @property
+    def reconstruction_dir(self) -> Path:
+        return self.result_root / "vis" / self.scene_name / "final"
+
+    @property
+    def report_dir(self) -> Path:
+        return self.result_root / "outputs" / self.scene_name / "evaluation"
+
+    def validate(self) -> None:
+        validate_geometry(self.size, self.aperture_height)
+        if not Path(self.input_image).is_file():
+            raise FileNotFoundError(f"清晰物体图片不存在：{self.input_image}")
+        if not self.scene_name.strip():
+            raise ValueError("scene_name 不能为空。")
+        if self.num_frames <= 0:
+            raise ValueError("num_frames 必须为正数。")
+        if not 1 <= self.system_noll_start <= self.system_noll_end <= SYSTEM_NUM_MODES:
+            raise ValueError("系统像差 Noll 范围必须位于 1 到 28。")
+        if self.system_sigma < 0 or self.slm_sigma < 0 or self.noise_std < 0:
+            raise ValueError("所有标准差都必须为非负数。")
+        if self.slm_num_modes <= 0:
+            raise ValueError("slm_num_modes 必须为正数。")
+        if self.phase_sign not in (-1, 1):
+            raise ValueError("phase_sign 必须为 -1 或 1。")
+        if self.simulation_batch_size <= 0 or self.training_batch_size <= 0:
+            raise ValueError("batch size 必须为正数。")
+        if self.training_epochs <= 0 or self.phase_layers <= 0:
+            raise ValueError("训练轮数和相位网络层数必须为正数。")
+
+    def dataset_signature(self) -> dict:
+        geometry = validate_geometry(self.size, self.aperture_height)
+        return {
+            "input_image": str(Path(self.input_image).expanduser().resolve()),
+            "size": geometry.size,
+            "aperture_height": geometry.aperture_height,
+            "num_frames": self.num_frames,
+            "system_num_modes": SYSTEM_NUM_MODES,
+            "system_noll_range": [self.system_noll_start, self.system_noll_end],
+            "system_sigma_rad": self.system_sigma,
+            "system_seed": self.system_seed,
+            "slm_num_modes": self.slm_num_modes,
+            "slm_sigma_rad": self.slm_sigma,
+            "slm_seed": self.slm_seed,
+            "phase_sign": self.phase_sign,
+            "noise_std": self.noise_std,
+            "noise_seed": self.noise_seed,
+        }
+
+
+def sample_system_aberration_coefficients(settings: SimulationSettings) -> np.ndarray:
+    """Draw one reproducible system aberration and leave all other Noll terms at zero."""
+    settings.validate()
+    coefficients = np.zeros(SYSTEM_NUM_MODES, dtype=np.float32)
+    rng = np.random.default_rng(settings.system_seed)
+    start = settings.system_noll_start - 1
+    stop = settings.system_noll_end
+    coefficients[start:stop] = rng.normal(
+        0.0, settings.system_sigma, size=stop - start
+    ).astype(np.float32)
+    return coefficients
+
+
+def _json_safe(value):
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, float) and not np.isfinite(value):
+        return "inf" if value > 0 else "-inf"
+    return value
+
+
+def _manifest_path(settings: SimulationSettings) -> Path:
+    return settings.data_dir / "manifest.json"
+
+
+def _write_manifest(settings: SimulationSettings, manifest: dict) -> None:
+    _manifest_path(settings).write_text(
+        json.dumps(_json_safe(manifest), indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _load_manifest(settings: SimulationSettings, required_step: Optional[str] = None) -> dict:
+    path = _manifest_path(settings)
+    if not path.is_file():
+        raise FileNotFoundError(f"缺少工作流清单：{path}，请先运行步骤一。")
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    if manifest.get("schema_version") != WORKFLOW_SCHEMA_VERSION:
+        raise ValueError(f"不支持的工作流清单版本：{manifest.get('schema_version')}")
+    if manifest.get("dataset_settings") != settings.dataset_signature():
+        raise ValueError("当前静态仿真 config.py 与已生成数据的配置不一致，请更换运行目录。")
+    if required_step and not manifest.get("completed_steps", {}).get(required_step, False):
+        raise RuntimeError(f"前置步骤 {required_step} 尚未完成。")
+    return manifest
+
+
+def _refuse_existing(paths: list[Path], settings: SimulationSettings, stage: str) -> None:
+    existing = [path for path in paths if path.exists()]
+    if existing and not settings.overwrite:
+        names = ", ".join(str(path) for path in existing[:3])
+        raise FileExistsError(
+            f"{stage} 的输出已经存在：{names}。为防止覆盖，请更换运行目录；"
+            "确认需要覆盖时再将 overwrite 设置为 True。"
+        )
+
+
+def _load_ground_truth(settings: SimulationSettings) -> dict:
+    path = settings.data_dir / "ground_truth.mat"
+    if not path.is_file():
+        raise FileNotFoundError(f"缺少真值文件：{path}")
+    return sio.loadmat(path)
+
+
+def prepare_ground_truth(settings: SimulationSettings) -> dict:
+    """Stage 1: save the clear object, fixed aberration and flat-SLM baseline."""
+    settings.validate()
+    _refuse_existing(
+        [_manifest_path(settings), settings.data_dir / "ground_truth.mat", settings.reference_dir],
+        settings,
+        "步骤一",
+    )
+    geometry = validate_geometry(settings.size, settings.aperture_height)
+    settings.reference_dir.mkdir(parents=True, exist_ok=True)
+    device = resolve_device(settings.generation_device)
+    clear_object = read_normalized_square(settings.input_image, geometry.size)
+    coefficients = sample_system_aberration_coefficients(settings)
+    system_field, system_phase = zernike_aberration_from_coefficients(
+        coefficients,
+        geometry.size,
+        geometry.aperture_height,
+        device=device,
+    )
+    flat_phase = torch.zeros(
+        (1, geometry.aperture_height, geometry.size), dtype=torch.float32, device=device
+    )
+    flat_slm = slm_complex_field(flat_phase, geometry.size, settings.phase_sign)
+    object_tensor = torch.as_tensor(clear_object, dtype=torch.float32, device=device)
+    baseline, psfs = simulate_measurements(object_tensor, system_field, flat_slm)
+    baseline_np = baseline[0, 0].detach().cpu().numpy().astype(np.float32)
+    psf_np = psfs[0, 0].detach().cpu().numpy().astype(np.float32)
+    phase_np = system_phase.detach().cpu().numpy().astype(np.float32)
+    field_np = system_field.detach().cpu().numpy().astype(np.complex64)
+    if not all(np.isfinite(value).all() for value in (clear_object, baseline_np, psf_np, phase_np, field_np)):
+        raise RuntimeError("步骤一产生了 NaN 或无穷值。")
+
+    np.save(settings.reference_dir / "clear_object.npy", clear_object)
+    np.save(settings.reference_dir / "system_aberration_coefficients.npy", coefficients)
+    np.save(settings.reference_dir / "system_aberration_phase.npy", phase_np)
+    np.save(settings.reference_dir / "system_aberration_field.npy", field_np)
+    np.save(settings.reference_dir / "baseline_aberrated_measurement.npy", baseline_np)
+    np.save(settings.reference_dir / "baseline_psf.npy", psf_np)
+    write_unit_png(settings.reference_dir / "clear_object.png", clear_object)
+    write_wrapped_phase_png(
+        settings.reference_dir / "system_aberration_phase.png", phase_np
+    )
+    write_unit_png(
+        settings.reference_dir / "baseline_aberrated_measurement.png", baseline_np
+    )
+    psf_display = np.log1p(psf_np / max(float(psf_np.max()), 1e-12)) / math.log(2.0)
+    write_unit_png(settings.reference_dir / "baseline_psf.png", psf_display)
+    sio.savemat(
+        settings.data_dir / "ground_truth.mat",
+        {
+            "clear_object": clear_object,
+            "object_image": clear_object,
+            "system_aberration_coefficients": coefficients,
+            "aberration_coefficients": coefficients,
+            "system_aberration_phase": phase_np,
+            "aberration_phase": phase_np,
+            "system_aberration_field": field_np,
+            "aberration_field": field_np,
+            "system_aberration_amplitude": np.abs(field_np).astype(np.float32),
+            "baseline_aberrated_measurement": baseline_np,
+            "baseline_psf": psf_np,
+        },
+        do_compression=True,
+    )
+    manifest = {
+        "schema_version": WORKFLOW_SCHEMA_VERSION,
+        "workflow": "static_neuws_simulation",
+        "scene_name": settings.scene_name,
+        "size": geometry.size,
+        "aperture_height": geometry.aperture_height,
+        "num_frames": settings.num_frames,
+        "phase_sign": settings.phase_sign,
+        "dataset_settings": settings.dataset_signature(),
+        "phase_convention": "system exp(+1j*phase), SLM exp(phase_sign*1j*phase)",
+        "system_aberration_coefficients_rad": coefficients.tolist(),
+        "completed_steps": {"ground_truth": True, "patterns": False, "measurements": False},
+        "outputs": {
+            "ground_truth": "ground_truth.mat",
+            "reference_directory": "reference",
+        },
+    }
+    _write_manifest(settings, manifest)
+    print(f"步骤一完成：固定系统像差和基准模糊图已保存到 {settings.reference_dir}")
+    return manifest
+
+
+def generate_slm_patterns(settings: SimulationSettings) -> dict:
+    """Stage 2: generate and persist the known SLM modulation phases."""
+    settings.validate()
+    manifest = _load_manifest(settings, "ground_truth")
+    png_dir = settings.data_dir / "slm_png"
+    _refuse_existing(
+        [settings.data_dir / "slm_patterns.npy", settings.data_dir / "SLM_sim1.mat", png_dir],
+        settings,
+        "步骤二",
+    )
+    geometry = validate_geometry(settings.size, settings.aperture_height)
+    png_dir.mkdir(parents=True, exist_ok=True)
+    coefficients = sample_slm_coefficients(
+        settings.num_frames, settings.slm_num_modes, settings.slm_sigma, settings.slm_seed
+    )
+    basis = zernike_basis_numpy(settings.slm_num_modes, geometry.size)
+    full_patterns = np.einsum("fm,mhw->fhw", coefficients, basis, optimize=True)
+    top = (geometry.size - geometry.aperture_height) // 2
+    patterns = np.asarray(
+        full_patterns[:, top : top + geometry.aperture_height, :], dtype=np.float32
+    )
+    np.save(settings.data_dir / "slm_coefficients.npy", coefficients)
+    np.save(settings.data_dir / "slm_patterns.npy", patterns)
+    for frame, phase in enumerate(patterns, start=1):
+        sio.savemat(
+            settings.data_dir / f"SLM_sim{frame}.mat",
+            {"proj_sim": phase},
+            do_compression=True,
+        )
+        write_wrapped_phase_png(png_dir / f"slm_phase_{frame:04d}.png", phase)
+    manifest["completed_steps"]["patterns"] = True
+    manifest["outputs"].update(
+        {
+            "slm_patterns": "slm_patterns.npy",
+            "slm_coefficients": "slm_coefficients.npy",
+            "slm_phase_mat": "SLM_simN.mat:proj_sim",
+            "slm_phase_previews": "slm_png/slm_phase_NNNN.png",
+        }
+    )
+    _write_manifest(settings, manifest)
+    print(f"步骤二完成：已生成 {settings.num_frames} 张已知 SLM 相位，保存在 {settings.data_dir}")
+    return manifest
+
+
+def simulate_modulated_measurements(settings: SimulationSettings) -> dict:
+    """Stage 3: synthesize every frame directly from the clear object and total pupil."""
+    settings.validate()
+    manifest = _load_manifest(settings, "patterns")
+    png_dir = settings.data_dir / "measurement_png"
+    _refuse_existing(
+        [settings.data_dir / "measurements.npy", settings.data_dir / "SLM_raw1.mat", png_dir],
+        settings,
+        "步骤三",
+    )
+    geometry = validate_geometry(settings.size, settings.aperture_height)
+    patterns = np.load(settings.data_dir / "slm_patterns.npy", allow_pickle=False)
+    expected_shape = (settings.num_frames, geometry.aperture_height, geometry.size)
+    if patterns.shape != expected_shape or not np.isfinite(patterns).all():
+        raise ValueError(f"SLM 相位数组应为 {expected_shape} 且全部有限，实际为 {patterns.shape}。")
+    truth = _load_ground_truth(settings)
+    clear_object = np.asarray(truth["clear_object"], dtype=np.float32)
+    system_field = np.asarray(truth["system_aberration_field"], dtype=np.complex64)
+    if clear_object.shape != (geometry.size, geometry.size):
+        raise ValueError("清晰物体真值尺寸与当前配置不一致。")
+    if system_field.shape != clear_object.shape:
+        raise ValueError("系统像差复场尺寸与清晰物体不一致。")
+    device = resolve_device(settings.generation_device)
+    object_tensor = torch.as_tensor(clear_object, dtype=torch.float32, device=device)
+    field_tensor = torch.as_tensor(system_field, dtype=torch.complex64, device=device)
+    measurements = np.empty(
+        (settings.num_frames, geometry.size, geometry.size), dtype=np.float32
+    )
+    noise_rng = np.random.default_rng(settings.noise_seed)
+    for start in range(0, settings.num_frames, settings.simulation_batch_size):
+        stop = min(start + settings.simulation_batch_size, settings.num_frames)
+        active_phase = torch.as_tensor(patterns[start:stop], dtype=torch.float32, device=device)
+        slm_fields = slm_complex_field(active_phase, geometry.size, settings.phase_sign)
+        batch, _ = simulate_measurements(object_tensor, field_tensor, slm_fields)
+        batch_np = batch[:, 0].detach().cpu().numpy().astype(np.float32)
+        if settings.noise_std:
+            batch_np += noise_rng.normal(
+                0.0, settings.noise_std, size=batch_np.shape
+            ).astype(np.float32)
+            batch_np = np.clip(batch_np, 0.0, None)
+        if not np.isfinite(batch_np).all():
+            raise RuntimeError("步骤三产生了 NaN 或无穷值。")
+        measurements[start:stop] = batch_np
+    png_dir.mkdir(parents=True, exist_ok=True)
+    np.save(settings.data_dir / "measurements.npy", measurements)
+    for frame, measurement in enumerate(measurements, start=1):
+        sio.savemat(
+            settings.data_dir / f"SLM_raw{frame}.mat",
+            {"imsdata": measurement},
+            do_compression=True,
+        )
+        write_unit_png(
+            png_dir / f"modulated_measurement_{frame:04d}.png", measurement
+        )
+    manifest["measurement_max"] = float(measurements.max())
+    manifest["measurement_generation"] = (
+        "Each frame is generated directly from clear_object and the combined "
+        "fixed-system/known-SLM pupil; baseline_aberrated_measurement is never reused."
+    )
+    manifest["completed_steps"]["measurements"] = True
+    manifest["outputs"].update(
+        {
+            "measurements": "measurements.npy",
+            "measurement_mat": "SLM_rawN.mat:imsdata",
+            "measurement_previews": "measurement_png/modulated_measurement_NNNN.png",
+        }
+    )
+    _write_manifest(settings, manifest)
+    print(f"步骤三完成：已直接从清晰物体生成 {settings.num_frames} 张调制测量图。")
+    return manifest
+
+
+def reconstruct_static_scene(settings: SimulationSettings) -> Path:
+    """Stage 4: run the existing static NeuWS inverse model and add semantic outputs."""
+    settings.validate()
+    manifest = _load_manifest(settings, "measurements")
+    final_dir = settings.reconstruction_dir
+    _refuse_existing([final_dir], settings, "步骤四")
+    resolve_device(settings.training_device)
+    command = [
+        sys.executable,
+        str(settings.project_root / "recon_exp_data.py"),
+        "--root_dir",
+        str(settings.result_root),
+        "--data_dir",
+        str(settings.data_dir),
+        "--scene_name",
+        settings.scene_name,
+        "--num_epochs",
+        str(settings.training_epochs),
+        "--batch_size",
+        str(settings.training_batch_size),
+        "--phs_layers",
+        str(settings.phase_layers),
+        "--init_lr",
+        str(settings.initial_learning_rate),
+        "--final_lr",
+        str(settings.final_learning_rate),
+        "--vis_freq",
+        str(settings.visualization_frequency),
+        "--device",
+        settings.training_device,
+        "--seed",
+        str(settings.system_seed),
+        "--static_phase",
+    ]
+    if settings.silence_tqdm:
+        command.append("--silence_tqdm")
+    environment = os.environ.copy()
+    mpl_cache = settings.data_dir / ".matplotlib"
+    mpl_cache.mkdir(exist_ok=True)
+    environment["MPLCONFIGDIR"] = str(mpl_cache)
+    subprocess.run(command, cwd=settings.project_root, env=environment, check=True)
+
+    image_values = sio.loadmat(final_dir / "final_I_est.mat")
+    network_image_path = final_dir / "final_I_est_network_units.mat"
+    if network_image_path.is_file():
+        network_image_values = sio.loadmat(network_image_path)
+        reconstructed_object_network_units = np.asarray(
+            network_image_values["image"], dtype=np.float32
+        ).squeeze()
+    else:
+        reconstructed_object_network_units = np.asarray(
+            image_values["image"], dtype=np.float32
+        ).squeeze()
+    aberration_values = sio.loadmat(final_dir / "final_aberration.mat")
+    measurement_scale = float(manifest.get("measurement_max", 1.0))
+    if not np.isfinite(measurement_scale) or measurement_scale <= 0:
+        raise ValueError("manifest.json 中的 measurement_max 必须为有限正数。")
+    reconstructed_object = np.clip(
+        reconstructed_object_network_units * measurement_scale, 0.0, 1.0
+    ).astype(np.float32)
+    if "phase" in aberration_values:
+        reconstructed_phase = np.asarray(aberration_values["phase"], dtype=np.float32).squeeze()
+    else:
+        reconstructed_phase = np.angle(aberration_values["field"]).astype(np.float32).squeeze()
+    reconstructed_field = np.asarray(aberration_values["field"]).squeeze().astype(np.complex64)
+    if not all(
+        np.isfinite(value).all()
+        for value in (
+            reconstructed_object_network_units,
+            reconstructed_object,
+            reconstructed_phase,
+            reconstructed_field,
+        )
+    ):
+        raise RuntimeError("网络恢复结果包含 NaN 或无穷值。")
+    sio.savemat(
+        final_dir / "reconstructed_object.mat",
+        {"reconstructed_object": reconstructed_object},
+        do_compression=True,
+    )
+    np.save(final_dir / "reconstructed_object.npy", reconstructed_object)
+    np.save(
+        final_dir / "reconstructed_object_network_units.npy",
+        reconstructed_object_network_units,
+    )
+    write_unit_png(final_dir / "reconstructed_object.png", reconstructed_object)
+    sio.savemat(
+        final_dir / "reconstructed_aberration.mat",
+        {
+            "reconstructed_aberration_field": reconstructed_field,
+            "reconstructed_aberration_phase": reconstructed_phase,
+        },
+        do_compression=True,
+    )
+    np.save(final_dir / "reconstructed_aberration_field.npy", reconstructed_field)
+    np.save(final_dir / "reconstructed_aberration_phase.npy", reconstructed_phase)
+    write_wrapped_phase_png(
+        final_dir / "reconstructed_aberration_phase.png", reconstructed_phase
+    )
+    manifest["reconstruction"] = {
+        "completed": True,
+        "directory": str(final_dir),
+        "device": settings.training_device,
+        "epochs": settings.training_epochs,
+        "batch_size": settings.training_batch_size,
+        "phase_layers": settings.phase_layers,
+        "object_radiometric_scale": measurement_scale,
+    }
+    _write_manifest(settings, manifest)
+    print(f"步骤四完成：网络恢复结果保存在 {final_dir}")
+    return final_dir
+
+
+def evaluate_reconstruction(settings: SimulationSettings) -> dict:
+    """Stage 5: compare the reconstruction with image and aberration ground truth."""
+    settings.validate()
+    manifest = _load_manifest(settings, "measurements")
+    if not manifest.get("reconstruction", {}).get("completed", False):
+        raise RuntimeError("步骤四尚未完成，无法评估网络恢复结果。")
+    output_dir = settings.report_dir
+    _refuse_existing([output_dir], settings, "步骤五")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    truth = _load_ground_truth(settings)
+    clear_object = np.asarray(truth["clear_object"], dtype=np.float32).squeeze()
+    baseline = np.asarray(
+        truth["baseline_aberrated_measurement"], dtype=np.float32
+    ).squeeze()
+    reference_phase = np.asarray(
+        truth["system_aberration_phase"], dtype=np.float32
+    ).squeeze()
+    final_dir = settings.reconstruction_dir
+    reconstructed_object = np.load(final_dir / "reconstructed_object.npy", allow_pickle=False)
+    reconstructed_phase = np.load(
+        final_dir / "reconstructed_aberration_phase.npy", allow_pickle=False
+    )
+    baseline_metrics, _ = evaluate_images(clear_object, baseline, register=False)
+    reconstruction_metrics, registered = evaluate_images(
+        clear_object, reconstructed_object, register=True
+    )
+    geometry = validate_geometry(settings.size, settings.aperture_height)
+    mask = aperture_mask(geometry.size, geometry.aperture_height).numpy().astype(bool)
+    phase_metrics, primary_error, diagnostic_error = evaluate_phases(
+        reference_phase, reconstructed_phase, mask
+    )
+    summary_path = final_dir / "training_summary.json"
+    training_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    loss_history = [float(value) for value in training_summary.get("loss_history", [])]
+    report = {
+        "scene_name": settings.scene_name,
+        "baseline_image": baseline_metrics,
+        "reconstructed_image": reconstruction_metrics,
+        "reconstructed_system_aberration": phase_metrics,
+        "training": {
+            "epochs": training_summary.get("num_epochs"),
+            "elapsed_seconds": training_summary.get("elapsed_seconds"),
+            "initial_loss": loss_history[0] if loss_history else None,
+            "final_loss": loss_history[-1] if loss_history else None,
+            "minimum_loss": min(loss_history) if loss_history else None,
+            "object_radiometric_scale": manifest.get("measurement_max"),
+        },
+    }
+    (output_dir / "reconstruction_report.json").write_text(
+        json.dumps(_json_safe(report), indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    sio.savemat(
+        output_dir / "phase_errors.mat",
+        {
+            "aperture_mask": mask,
+            "piston_tip_tilt_removed_error": primary_error,
+            "diagnostic_error": diagnostic_error,
+        },
+        do_compression=True,
+    )
+
+    fig, axes = plt.subplots(2, 3, figsize=(15, 9))
+    image_panels = (
+        (clear_object, "Clear object ground truth"),
+        (baseline, "Flat-SLM aberrated baseline"),
+        (reconstructed_object, "Reconstructed object"),
+    )
+    for axis, (panel, title) in zip(axes[0], image_panels):
+        axis.imshow(panel, cmap="gray", vmin=0, vmax=1)
+        axis.set_title(title)
+        axis.axis("off")
+    phase_panels = (
+        (reference_phase, "System aberration ground truth"),
+        (reconstructed_phase, "Reconstructed aberration"),
+        (np.ma.array(primary_error, mask=~mask), "PTT-removed wrapped error"),
+    )
+    for axis, (panel, title) in zip(axes[1], phase_panels):
+        shown = axis.imshow(panel, cmap="twilight", vmin=-np.pi, vmax=np.pi)
+        axis.set_title(title)
+        axis.axis("off")
+        fig.colorbar(shown, ax=axis, fraction=0.046)
+    fig.tight_layout()
+    fig.savefig(output_dir / "reconstruction_comparison.png", dpi=150)
+    plt.close(fig)
+
+    if registered is not None:
+        ref_view, estimate_view = registered
+        np.save(output_dir / "registered_clear_object.npy", ref_view)
+        np.save(output_dir / "registered_reconstructed_object.npy", estimate_view)
+    if loss_history:
+        fig, axis = plt.subplots(figsize=(7, 4))
+        axis.plot(np.arange(1, len(loss_history) + 1), loss_history)
+        axis.set_xlabel("Epoch")
+        axis.set_ylabel("Mean squared error")
+        axis.set_title("NeuWS training loss")
+        axis.grid(True, alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(output_dir / "training_loss.png", dpi=150)
+        plt.close(fig)
+    manifest["evaluation"] = {
+        "completed": True,
+        "directory": str(output_dir),
+        "report": "reconstruction_report.json",
+    }
+    _write_manifest(settings, manifest)
+    print(f"步骤五完成：定量指标和总览图保存在 {output_dir}")
+    return report

@@ -222,6 +222,7 @@ def main() -> None:
     output_errors = []
     output_aberrations = []
     output_images = []
+    output_images_network_units = []
     final_field = None
     final_phase = None
     network.eval()
@@ -231,7 +232,9 @@ def main() -> None:
                 torch.tensor([frame], dtype=torch.long, device=device), len(dataset)
             )
             image_estimate, sim_g, sim_phs = network.get_estimates(current_time)
-            image_np = torch.clamp(image_estimate, 0, 1).squeeze().cpu().numpy()
+            image_network_np = torch.clamp(image_estimate, min=0).squeeze().cpu().numpy()
+            image_np = np.clip(image_network_np, 0, 1)
+            output_images_network_units.append(image_network_np)
             output_images.append(image_np)
             field_np = sim_g.squeeze().cpu().numpy()
             phase_np = sim_phs.squeeze().cpu().numpy()
@@ -250,6 +253,10 @@ def main() -> None:
     else:
         imageio.imwrite(final_dir / "final_I_est.png", np.uint8(output_images[-1] * 255))
     sio.savemat(final_dir / "final_I_est.mat", {"image": output_images[-1]})
+    sio.savemat(
+        final_dir / "final_I_est_network_units.mat",
+        {"image": output_images_network_units[-1]},
+    )
     sio.savemat(
         final_dir / "final_aberration.mat",
         {"field": final_field, "phase": final_phase},
@@ -275,6 +282,7 @@ def main() -> None:
         "num_frames": len(dataset),
         "num_epochs": args.num_epochs,
         "static_phase": args.static_phase,
+        "measurement_normalization_max": dataset.max_intensity,
         "loss_history": loss_history,
         "elapsed_seconds": elapsed,
     }

@@ -1,5 +1,46 @@
 # NeuWS: Neural Wavefront Shaping
 
+## 中文快速入口（第一次使用请先看这里）
+
+这个项目可以完成三类任务：
+
+| 目标 | 从哪里开始 | 主要输出 |
+| --- | --- | --- |
+| 给一张清晰图片添加指定 Zernike 像差 | 编辑并运行 `run_single_image.py` | 像差相位图、PSF、模糊图 |
+| 完整运行“生成相位→模拟测量→网络恢复→评价” | 阅读 [`workflows/static_simulation/README.md`](workflows/static_simulation/README.md) | 50 张 SLM 相位、50 张测量图、恢复图像和恢复像差 |
+| 使用自己的 MATLAB/相机数据重建 | 查看下方“Static reconstruction”和“Data contract” | `final_I_est.mat`、`final_aberration.mat` |
+
+如果你的目标是第一次完整复现今天验证过的仿真，请不要从旧的
+`run_dataset.py` 开始，而应按以下顺序操作：
+
+1. 在 VS Code 中选择解释器
+   `/home/xiangwan/miniconda3/envs/neuws/bin/python`；
+2. 打开 `workflows/static_simulation/config.py`；
+3. 修改输入图片、`data_dir` 和 `scene_name`；
+4. 依次运行同目录下 `step1` 到 `step5`；
+5. 在 `outputs/SCENE_NAME/evaluation/reconstruction_comparison.png` 查看总览图，
+   在 `reconstruction_report.json` 查看定量指标。
+
+重要提醒：当前默认运行名 `test_static_zernike_50` 已经有正式结果，而且配置中
+`overwrite=False`。新用户应把 `data_dir` 和 `scene_name` 同时改成一个新的、
+相同的名称，例如 `my_first_simulation`，不要直接覆盖现有结果。
+
+项目中统一使用以下术语：
+
+- **清晰物体**：仿真的原始清晰图片；
+- **系统像差相位图**：固定、对网络未知的真实像差；
+- **SLM 调制相位图**：逐帧变化、对网络已知的相位；
+- **调制测量图**：清晰物体经过“固定系统像差 + 对应 SLM 相位”后形成的图像；
+- **恢复结果**：网络估计的清晰物体和系统像差相位。
+
+完整的中文入门教程、参数表、输出说明、代码职责表和故障排查见：
+
+**[`workflows/static_simulation/README.md`](workflows/static_simulation/README.md)**
+
+2026-07-30 的实现过程、CUDA 验证和正式指标见：
+
+**[`log/2026-07-30_NeuWS完整静态仿真与CUDA重建.md`](log/2026-07-30_NeuWS完整静态仿真与CUDA重建.md)**
+
 This repository contains the code for “NeuWS: Neural Wavefront Shaping for Guidestar-Free Imaging Through Static and Dynamic Scattering Media” and a Python/AOtools closed-loop workflow for generating SLM patterns, simulating measurements, reconstructing a static scene, and evaluating the result.
 
 - [Paper](https://pmc.ncbi.nlm.nih.gov/articles/PMC10306297/)
@@ -46,6 +87,46 @@ Then use one of the two root-level entry points:
 2. Open `run_dataset.py`, edit its settings block, and click **Run Python File**. Dataset aberrations remain randomly generated and independent from the single-image coefficient dictionary.
 
 Both files contain working defaults for this machine. The command-line interfaces described below remain available and override nothing in the VS Code entry points; the two ways of running are independent.
+
+## Complete five-step static simulation
+
+For the reproducible 50-frame closed-loop simulation, edit the Chinese-commented
+settings in `workflows/static_simulation/config.py`, then open the same directory
+and run these files in order from VS Code:
+
+1. `step1_prepare_ground_truth.py` creates the normalized clear object, one fixed
+   seeded Zernike system aberration, its phase/field, the flat-SLM PSF, and the
+   baseline aberrated measurement.
+2. `step2_generate_slm_patterns.py` creates 50 known random SLM modulation phases.
+3. `step3_simulate_measurements.py` reads the saved object, system aberration and
+   SLM phases and creates every camera frame directly from their combined pupil.
+   It never applies another blur to the baseline aberrated image.
+4. `step4_reconstruct.py` supplies only the 50 measurements and their known SLM
+   phases to the static NeuWS network. The system-aberration ground truth is not
+   supplied to the network.
+5. `step5_evaluate.py` compares the recovered object and system aberration with
+   their simulation ground truths and writes an aggregate report and figures.
+
+The loader normalizes camera measurements by one dataset-wide maximum. The
+reconstruction stage therefore saves the raw non-negative network estimate and
+uses that recorded maximum to produce the radiometrically restored
+`reconstructed_object`; evaluation never compares the normalized network units
+directly with the original object.
+
+The default dataset directory is `data/test_static_zernike_50/`. Human-readable
+outputs use names such as `clear_object`, `system_aberration_phase`,
+`slm_phase_0001`, `modulated_measurement_0001`, and `reconstructed_object`.
+The `SLM_simN.mat:proj_sim` and `SLM_rawN.mat:imsdata` files remain alongside them
+as the network/hardware interchange contract. A future camera acquisition can
+replace only step 3 while keeping steps 2 and 4 unchanged. The exported 16-bit
+phase PNGs are generic wrapped-phase previews and still require a device-specific
+SLM LUT before hardware use.
+
+The implementation and entry points are intentionally grouped under
+`workflows/static_simulation/` so the project root remains focused on the shared
+NeuWS model and optical primitives. See
+`log/2026-07-30_NeuWS完整静态仿真与CUDA重建.md` for the verified run, metrics,
+normalization correction, and the route from simulation to a future camera experiment.
 
 ## Program 1: apply a specified aberration to one image
 
