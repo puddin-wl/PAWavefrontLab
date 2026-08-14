@@ -14,13 +14,19 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 SETTINGS = SimulationSettings(
     # ---------- 输入与运行名称 ----------
-    # 输入可以是灰度或 RGB 图片；程序会中心裁剪、缩放并归一化到 [0,1]。
+    # 输入可以是普通二维/RGB 图片，也可以是三维光声 TIFF。
+    # auto 会把普通图片按原流程读取；三维 TIFF 先减 2048、负值置零、沿第 0 维投影。
     project_root=PROJECT_ROOT,
     input_image=PROJECT_ROOT / "data" / "test.tif",
     # 开始新实验时，建议将 data_dir 最后一段和 scene_name 同时改成新名称。
     data_dir=PROJECT_ROOT / "data" / "test_static_zernike_50",
     result_root=PROJECT_ROOT,
     scene_name="test_static_zernike_50",
+    input_mode="auto",  # 可选 auto、image、photoacoustic-volume
+    photoacoustic_baseline=2048.0,
+    photoacoustic_projection_axis=0,  # 按旧代码固定为 0；不要求恰好 512 层
+    # 真实采集时填写存放 50 个三维 TIFF 的目录，并运行真实数据版步骤三。
+    raw_measurement_dir=PROJECT_ROOT / "data" / "raw_photoacoustic_measurements",
 
     # ---------- 图像与孔径 ----------
     # size 必须是正偶数；None 表示整个方形区域都有光。

@@ -49,7 +49,7 @@ VS Code 应选择解释器：
 
 ## 3. 项目与版本管理状态
 
-- 项目位置：`/home/xiangwan/program/NeuWS`
+- 项目位置（现名）：`/home/xiangwan/program/PAWavefrontLab`
 - 分支：`main`
 - 本地仓库无远程地址，不会上传原作者代码
 - 原始上游基线标签：`upstream-baseline`

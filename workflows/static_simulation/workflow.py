@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -15,13 +16,19 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scipy.io as sio
 import torch
+import tifffile
 
 from evaluation import evaluate_images, evaluate_phases
 from image_utils import (
+    normalize_square_array,
     read_normalized_square,
     resolve_device,
     write_unit_png,
     write_wrapped_phase_png,
+)
+from preprocessing.photoacoustic import (
+    load_photoacoustic_projection,
+    preprocess_photoacoustic_volume,
 )
 from optics import (
     aperture_mask,
@@ -69,6 +76,10 @@ class SimulationSettings:
     initial_learning_rate: float = 1e-3
     final_learning_rate: float = 1e-3
     visualization_frequency: int = 1000
+    input_mode: str = "auto"
+    photoacoustic_baseline: float = 2048.0
+    photoacoustic_projection_axis: int = 0
+    raw_measurement_dir: Optional[Path] = None
     overwrite: bool = False
     silence_tqdm: bool = False
 
@@ -104,6 +115,12 @@ class SimulationSettings:
             raise ValueError("batch size 必须为正数。")
         if self.training_epochs <= 0 or self.phase_layers <= 0:
             raise ValueError("训练轮数和相位网络层数必须为正数。")
+        if self.input_mode not in ("auto", "image", "photoacoustic-volume"):
+            raise ValueError("input_mode 必须是 auto、image 或 photoacoustic-volume。")
+        if not np.isfinite(self.photoacoustic_baseline):
+            raise ValueError("photoacoustic_baseline 必须是有限数值。")
+        if self.photoacoustic_projection_axis != 0:
+            raise ValueError("按照旧代码约定，photoacoustic_projection_axis 必须固定为 0。")
 
     def dataset_signature(self) -> dict:
         geometry = validate_geometry(self.size, self.aperture_height)
@@ -190,6 +207,62 @@ def _load_ground_truth(settings: SimulationSettings) -> dict:
     return sio.loadmat(path)
 
 
+def _read_clear_object(
+    settings: SimulationSettings, size: int
+) -> tuple[np.ndarray, dict, Optional[np.ndarray]]:
+    """读取普通二维图，或按旧约定预处理三维光声 TIFF。"""
+    path = Path(settings.input_image).expanduser().resolve()
+    is_tiff = path.suffix.lower() in (".tif", ".tiff")
+    use_volume = settings.input_mode == "photoacoustic-volume"
+    inspected = None
+    if settings.input_mode == "auto" and is_tiff:
+        inspected = tifffile.imread(path)
+        # H×W×3/4 更可能是普通 RGB(A) TIFF；其他三维 TIFF 按光声体数据处理。
+        use_volume = inspected.ndim == 3 and inspected.shape[-1] not in (3, 4)
+    if settings.input_mode == "image" or not use_volume:
+        clear_object = read_normalized_square(path, size)
+        return clear_object, {
+            "mode": "ordinary_image",
+            "source_file": str(path),
+            "output_shape": [size, size],
+            "normalization": "individual_min_max_to_unit_interval",
+        }, None
+    if not is_tiff:
+        raise ValueError("photoacoustic-volume 模式只支持 .tif 或 .tiff 文件。")
+    if inspected is None:
+        projection, metadata = load_photoacoustic_projection(
+            path,
+            settings.photoacoustic_baseline,
+            settings.photoacoustic_projection_axis,
+        )
+    else:
+        projection = preprocess_photoacoustic_volume(
+            inspected,
+            settings.photoacoustic_baseline,
+            settings.photoacoustic_projection_axis,
+        )
+        metadata = {
+            "source_file": str(path),
+            "source_shape": [int(value) for value in inspected.shape],
+            "source_dtype": str(inspected.dtype),
+            "baseline": float(settings.photoacoustic_baseline),
+            "negative_policy": "clip_to_zero_after_baseline_subtraction",
+            "projection": "maximum_intensity_projection",
+            "projection_axis": 0,
+            "layer_count_required": None,
+            "projected_shape": [int(value) for value in projection.shape],
+        }
+    clear_object = normalize_square_array(projection, size)
+    metadata.update(
+        {
+            "mode": "photoacoustic_volume",
+            "output_shape": [size, size],
+            "normalization": "individual_min_max_to_unit_interval_after_projection",
+        }
+    )
+    return clear_object, metadata, projection
+
+
 def prepare_ground_truth(settings: SimulationSettings) -> dict:
     """Stage 1: save the clear object, fixed aberration and flat-SLM baseline."""
     settings.validate()
@@ -201,7 +274,9 @@ def prepare_ground_truth(settings: SimulationSettings) -> dict:
     geometry = validate_geometry(settings.size, settings.aperture_height)
     settings.reference_dir.mkdir(parents=True, exist_ok=True)
     device = resolve_device(settings.generation_device)
-    clear_object = read_normalized_square(settings.input_image, geometry.size)
+    clear_object, input_preprocessing, photoacoustic_projection = _read_clear_object(
+        settings, geometry.size
+    )
     coefficients = sample_system_aberration_coefficients(settings)
     system_field, system_phase = zernike_aberration_from_coefficients(
         coefficients,
@@ -228,6 +303,11 @@ def prepare_ground_truth(settings: SimulationSettings) -> dict:
     np.save(settings.reference_dir / "system_aberration_field.npy", field_np)
     np.save(settings.reference_dir / "baseline_aberrated_measurement.npy", baseline_np)
     np.save(settings.reference_dir / "baseline_psf.npy", psf_np)
+    if photoacoustic_projection is not None:
+        np.save(
+            settings.reference_dir / "photoacoustic_projection_raw.npy",
+            photoacoustic_projection,
+        )
     write_unit_png(settings.reference_dir / "clear_object.png", clear_object)
     write_wrapped_phase_png(
         settings.reference_dir / "system_aberration_phase.png", phase_np
@@ -237,21 +317,24 @@ def prepare_ground_truth(settings: SimulationSettings) -> dict:
     )
     psf_display = np.log1p(psf_np / max(float(psf_np.max()), 1e-12)) / math.log(2.0)
     write_unit_png(settings.reference_dir / "baseline_psf.png", psf_display)
+    ground_truth_values = {
+        "clear_object": clear_object,
+        "object_image": clear_object,
+        "system_aberration_coefficients": coefficients,
+        "aberration_coefficients": coefficients,
+        "system_aberration_phase": phase_np,
+        "aberration_phase": phase_np,
+        "system_aberration_field": field_np,
+        "aberration_field": field_np,
+        "system_aberration_amplitude": np.abs(field_np).astype(np.float32),
+        "baseline_aberrated_measurement": baseline_np,
+        "baseline_psf": psf_np,
+    }
+    if photoacoustic_projection is not None:
+        ground_truth_values["photoacoustic_projection_raw"] = photoacoustic_projection
     sio.savemat(
         settings.data_dir / "ground_truth.mat",
-        {
-            "clear_object": clear_object,
-            "object_image": clear_object,
-            "system_aberration_coefficients": coefficients,
-            "aberration_coefficients": coefficients,
-            "system_aberration_phase": phase_np,
-            "aberration_phase": phase_np,
-            "system_aberration_field": field_np,
-            "aberration_field": field_np,
-            "system_aberration_amplitude": np.abs(field_np).astype(np.float32),
-            "baseline_aberrated_measurement": baseline_np,
-            "baseline_psf": psf_np,
-        },
+        ground_truth_values,
         do_compression=True,
     )
     manifest = {
@@ -265,12 +348,17 @@ def prepare_ground_truth(settings: SimulationSettings) -> dict:
         "dataset_settings": settings.dataset_signature(),
         "phase_convention": "system exp(+1j*phase), SLM exp(phase_sign*1j*phase)",
         "system_aberration_coefficients_rad": coefficients.tolist(),
+        "input_preprocessing": input_preprocessing,
         "completed_steps": {"ground_truth": True, "patterns": False, "measurements": False},
         "outputs": {
             "ground_truth": "ground_truth.mat",
             "reference_directory": "reference",
         },
     }
+    if photoacoustic_projection is not None:
+        manifest["outputs"]["photoacoustic_projection_raw"] = (
+            "reference/photoacoustic_projection_raw.npy"
+        )
     _write_manifest(settings, manifest)
     print(f"步骤一完成：固定系统像差和基准模糊图已保存到 {settings.reference_dir}")
     return manifest
@@ -389,6 +477,110 @@ def simulate_modulated_measurements(settings: SimulationSettings) -> dict:
     )
     _write_manifest(settings, manifest)
     print(f"步骤三完成：已直接从清晰物体生成 {settings.num_frames} 张调制测量图。")
+    return manifest
+
+
+def _natural_filename_key(path: Path) -> list[object]:
+    return [
+        int(part) if part.isdigit() else part.lower()
+        for part in re.split(r"(\d+)", path.name)
+    ]
+
+
+def import_photoacoustic_measurements(settings: SimulationSettings) -> dict:
+    """Alternative stage 3: convert acquired 3-D TIFF frames to NeuWS MAT inputs."""
+    settings.validate()
+    manifest = _load_manifest(settings, "patterns")
+    if settings.raw_measurement_dir is None:
+        raise ValueError("请先在 config.py 中设置 raw_measurement_dir。")
+    source_dir = Path(settings.raw_measurement_dir).expanduser().resolve()
+    if not source_dir.is_dir():
+        raise FileNotFoundError(f"三维光声测量目录不存在：{source_dir}")
+    files = sorted(
+        [
+            path
+            for path in source_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in (".tif", ".tiff")
+        ],
+        key=_natural_filename_key,
+    )
+    if len(files) != settings.num_frames:
+        raise ValueError(
+            f"测量目录必须恰好包含 {settings.num_frames} 个 TIFF，实际找到 {len(files)} 个。"
+        )
+    png_dir = settings.data_dir / "measurement_png"
+    _refuse_existing(
+        [settings.data_dir / "measurements.npy", settings.data_dir / "SLM_raw1.mat", png_dir],
+        settings,
+        "真实光声步骤三",
+    )
+    expected_shape = (settings.size, settings.size)
+    measurements = np.empty((settings.num_frames, *expected_shape), dtype=np.float32)
+    source_records = []
+    for index, path in enumerate(files):
+        projection, metadata = load_photoacoustic_projection(
+            path,
+            settings.photoacoustic_baseline,
+            settings.photoacoustic_projection_axis,
+        )
+        if projection.shape != expected_shape:
+            raise ValueError(
+                f"第 {index + 1} 帧 {path.name} 投影后为 {projection.shape}，"
+                f"必须与 SLM/网络尺寸 {expected_shape} 一致；真实测量不会自动裁剪或缩放。"
+            )
+        measurements[index] = projection
+        source_records.append(
+            {
+                "frame": index + 1,
+                "source_file": path.name,
+                "source_shape": metadata["source_shape"],
+                "source_dtype": metadata["source_dtype"],
+            }
+        )
+    measurement_max = float(measurements.max())
+    if not np.isfinite(measurement_max) or measurement_max <= 0:
+        raise ValueError("全部测量在减去基线并置零后没有正信号，无法归一化训练。")
+    png_dir.mkdir(parents=True, exist_ok=True)
+    np.save(settings.data_dir / "measurements.npy", measurements)
+    for frame, measurement in enumerate(measurements, start=1):
+        sio.savemat(
+            settings.data_dir / f"SLM_raw{frame}.mat",
+            {"imsdata": measurement},
+            do_compression=True,
+        )
+        # 所有预览共享同一个最大值，避免每帧独立拉伸后产生误导。
+        write_unit_png(
+            png_dir / f"modulated_measurement_{frame:04d}.png",
+            measurement / measurement_max,
+        )
+    manifest["measurement_max"] = measurement_max
+    manifest["measurement_generation"] = (
+        "Acquired 3-D photoacoustic TIFF: max(raw - baseline, 0), then axis-0 "
+        "maximum-intensity projection. MAT arrays retain cross-frame intensity scale."
+    )
+    manifest["photoacoustic_preprocessing"] = {
+        "source_directory": str(source_dir),
+        "baseline": float(settings.photoacoustic_baseline),
+        "negative_policy": "clip_to_zero_after_baseline_subtraction",
+        "projection": "maximum_intensity_projection",
+        "projection_axis": 0,
+        "layer_count_required": None,
+        "preview_normalization": "one_dataset_wide_maximum",
+        "mat_normalization": "none",
+        "frames": source_records,
+    }
+    manifest["completed_steps"]["measurements"] = True
+    manifest["outputs"].update(
+        {
+            "measurements": "measurements.npy",
+            "measurement_mat": "SLM_rawN.mat:imsdata",
+            "measurement_previews": "measurement_png/modulated_measurement_NNNN.png",
+        }
+    )
+    _write_manifest(settings, manifest)
+    print(
+        f"真实光声步骤三完成：已将 {settings.num_frames} 个三维 TIFF 沿第 0 维投影并写入 {settings.data_dir}"
+    )
     return manifest
 
 

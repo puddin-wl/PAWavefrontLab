@@ -19,6 +19,27 @@ def resolve_device(value: str) -> torch.device:
     return device
 
 
+def normalize_square_array(array: np.ndarray, size: int) -> np.ndarray:
+    """将二维数组中心裁剪、整体归一化并缩放到指定正方形尺寸。"""
+    array = np.asarray(array)
+    if array.ndim != 2:
+        raise ValueError(f"Expected a 2D array, got shape {array.shape}.")
+    if size <= 0:
+        raise ValueError("Output size must be positive.")
+    if not np.isfinite(array).all():
+        raise ValueError("Input image contains NaN or infinite values.")
+    height, width = array.shape
+    side = min(height, width)
+    top, left = (height - side) // 2, (width - side) // 2
+    array = array[top : top + side, left : left + side].astype(np.float32)
+    minimum, maximum = float(array.min()), float(array.max())
+    if maximum <= minimum:
+        raise ValueError("Input image must have a non-zero intensity range.")
+    array = (array - minimum) / (maximum - minimum)
+    resized = Image.fromarray(array).resize((size, size), Image.Resampling.BICUBIC)
+    return np.clip(np.asarray(resized, dtype=np.float32), 0.0, 1.0)
+
+
 def read_normalized_square(path_value: str | Path, size: int) -> np.ndarray:
     path = Path(path_value).expanduser().resolve()
     if not path.is_file():
@@ -32,18 +53,7 @@ def read_normalized_square(path_value: str | Path, size: int) -> np.ndarray:
         array = np.asarray(array[0])
     if array.ndim != 2:
         raise ValueError(f"Expected a grayscale or RGB image, got shape {array.shape}.")
-    height, width = array.shape
-    side = min(height, width)
-    top, left = (height - side) // 2, (width - side) // 2
-    array = array[top : top + side, left : left + side].astype(np.float32)
-    if not np.isfinite(array).all():
-        raise ValueError("Input image contains NaN or infinite values.")
-    minimum, maximum = float(array.min()), float(array.max())
-    if maximum <= minimum:
-        raise ValueError("Input image must have a non-zero intensity range.")
-    array = (array - minimum) / (maximum - minimum)
-    resized = Image.fromarray(array).resize((size, size), Image.Resampling.BICUBIC)
-    return np.clip(np.asarray(resized, dtype=np.float32), 0.0, 1.0)
+    return normalize_square_array(array, size)
 
 
 def write_unit_png(path_value: str | Path, image: np.ndarray) -> None:

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import time
 from pathlib import Path
@@ -93,6 +94,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch_size", default=8, type=int)
     parser.add_argument("--width", type=int, default=None)
     parser.add_argument("--vis_freq", default=1000, type=int)
+    parser.add_argument(
+        "--log_freq",
+        default=0,
+        type=int,
+        help="Print an epoch-loss update at this interval; 0 disables periodic logging.",
+    )
+    parser.add_argument(
+        "--early_stop_patience",
+        default=0,
+        type=int,
+        help="Stop after this many epochs without a meaningful smoothed-loss improvement; 0 disables.",
+    )
+    parser.add_argument("--early_stop_min_delta", default=0.0, type=float)
+    parser.add_argument("--early_stop_warmup", default=0, type=int)
+    parser.add_argument("--early_stop_window", default=10, type=int)
     parser.add_argument("--init_lr", default=1e-3, type=float)
     parser.add_argument("--final_lr", default=1e-3, type=float)
     parser.add_argument("--silence_tqdm", action="store_true")
@@ -114,6 +130,10 @@ def main() -> None:
     args = build_parser().parse_args()
     if args.num_epochs <= 0 or args.batch_size <= 0:
         raise ValueError("--num_epochs and --batch_size must be positive.")
+    if args.early_stop_patience < 0 or args.early_stop_warmup < 0:
+        raise ValueError("Early-stopping patience and warmup must be non-negative.")
+    if args.early_stop_window <= 0 or args.early_stop_min_delta < 0:
+        raise ValueError("Early-stopping window must be positive and min_delta non-negative.")
     root_dir = Path(args.root_dir).expanduser().resolve()
     requested_data_dir = Path(args.data_dir).expanduser()
     data_dir = requested_data_dir.resolve() if requested_data_dir.is_absolute() else root_dir / requested_data_dir
@@ -175,6 +195,12 @@ def main() -> None:
 
     total_iteration = 0
     loss_history = []
+    best_smoothed_loss = float("inf")
+    best_epoch = 0
+    epochs_without_improvement = 0
+    best_image_state = None
+    best_phase_state = None
+    stopped_early = False
     progress = tqdm.trange(args.num_epochs, disable=args.silence_tqdm)
     start_time = time.time()
     for epoch in progress:
@@ -216,8 +242,46 @@ def main() -> None:
         loss_history.append(float(np.mean(epoch_losses)))
         image_scheduler.step()
         phase_scheduler.step()
+        if args.log_freq > 0 and (
+            (epoch + 1) % args.log_freq == 0 or epoch + 1 == args.num_epochs
+        ):
+            elapsed_so_far = time.time() - start_time
+            print(
+                f"Epoch {epoch + 1}/{args.num_epochs}: "
+                f"mean MSE={loss_history[-1]:.6e}, elapsed={elapsed_so_far:.1f}s",
+                flush=True,
+            )
+        if (
+            args.early_stop_patience > 0
+            and epoch + 1 >= args.early_stop_warmup
+            and len(loss_history) >= args.early_stop_window
+        ):
+            smoothed_loss = float(np.mean(loss_history[-args.early_stop_window :]))
+            if smoothed_loss < best_smoothed_loss - args.early_stop_min_delta:
+                best_smoothed_loss = smoothed_loss
+                best_epoch = epoch + 1
+                epochs_without_improvement = 0
+                best_image_state = copy.deepcopy(network.g_im.state_dict())
+                best_phase_state = copy.deepcopy(network.g_g.state_dict())
+            else:
+                epochs_without_improvement += 1
+            if epochs_without_improvement >= args.early_stop_patience:
+                stopped_early = True
+                print(
+                    f"Early stopping at epoch {epoch + 1}: smoothed MSE has not "
+                    f"improved by {args.early_stop_min_delta:.3e} for "
+                    f"{args.early_stop_patience} epochs. Best epoch: {best_epoch}, "
+                    f"best smoothed MSE: {best_smoothed_loss:.6e}.",
+                    flush=True,
+                )
+                break
     elapsed = time.time() - start_time
     print(f"Training took {elapsed:.2f} seconds.")
+
+    if stopped_early and best_image_state is not None and best_phase_state is not None:
+        network.g_im.load_state_dict(best_image_state)
+        network.g_g.load_state_dict(best_phase_state)
+        print(f"Restored the best smoothed-loss state from epoch {best_epoch}.")
 
     output_errors = []
     output_aberrations = []
@@ -280,11 +344,24 @@ def main() -> None:
         "device": str(device),
         "width": width,
         "num_frames": len(dataset),
-        "num_epochs": args.num_epochs,
+        "num_epochs": len(loss_history),
+        "requested_num_epochs": args.num_epochs,
+        "batch_size": args.batch_size,
+        "phase_layers": args.phs_layers,
         "static_phase": args.static_phase,
         "measurement_normalization_max": dataset.max_intensity,
         "loss_history": loss_history,
         "elapsed_seconds": elapsed,
+        "early_stopping": {
+            "enabled": args.early_stop_patience > 0,
+            "stopped_early": stopped_early,
+            "patience": args.early_stop_patience,
+            "min_delta": args.early_stop_min_delta,
+            "warmup": args.early_stop_warmup,
+            "window": args.early_stop_window,
+            "best_epoch": best_epoch if best_epoch else None,
+            "best_smoothed_loss": best_smoothed_loss if np.isfinite(best_smoothed_loss) else None,
+        },
     }
     (final_dir / "training_summary.json").write_text(
         json.dumps(summary, indent=2) + "\n", encoding="utf-8"

@@ -1,4 +1,4 @@
-# NeuWS 静态像差完整仿真：中文新手教程
+# PAWavefrontLab 静态像差完整仿真：中文新手教程
 
 这份文档面向第一次接触 NeuWS、AOtools 和本项目代码的人。按顺序操作后，
 你应该能够：
@@ -38,17 +38,19 @@
 项目根目录：
 
 ```text
-/home/xiangwan/program/NeuWS
+/home/xiangwan/program/PAWavefrontLab
 ```
 
 当前示例输入图片：
 
 ```text
-/home/xiangwan/program/NeuWS/data/test.tif
+/home/xiangwan/program/PAWavefrontLab/data/test.tif
 ```
 
 这是 Linux/WSL 路径。不要写成 `U:\home\...` 这样的 Windows 路径。
-输入可以是灰度或 RGB 图片，程序会自动：
+输入可以是普通灰度/RGB 图片，也可以是三维光声 TIFF。
+
+普通图片会自动：
 
 1. 转换为灰度；
 2. 中心裁剪成正方形；
@@ -56,6 +58,16 @@
 4. 归一化到 `[0,1]`。
 
 常量全黑、全白或包含 NaN/Inf 的图片会被拒绝。
+
+三维光声 TIFF 按旧采集代码的约定自动执行：
+
+```text
+原始三维数据 -> max(原始值 - 2048, 0) -> 沿第 0 维最大投影 -> 二维清晰物体
+```
+
+这里的“置零”指减去 2048 后所有负值设为 0。投影维度始终是第 0 维，
+但第 0 维可以是任意正层数，不再强制要求 512 层。程序先转成浮点数再减，
+不会发生 16 位无符号整数下溢。
 
 ## 3. 首次运行前检查环境
 
@@ -107,7 +119,7 @@ run_single_image.py
 主要修改：
 
 ```python
-INPUT_IMAGE = "/home/xiangwan/program/NeuWS/data/test.tif"
+INPUT_IMAGE = "/home/xiangwan/program/PAWavefrontLab/data/test.tif"
 OUTPUT_DIR = "outputs/my_single_aberration"
 SIZE = 256
 
@@ -184,6 +196,10 @@ scene_name="my_first_simulation",
 | `input_image` | `data/test.tif` | 清晰输入图片 | 换图片时修改 |
 | `data_dir` | `data/test_static_zernike_50` | 相位和测量数据目录 | 新实验必须修改 |
 | `scene_name` | `test_static_zernike_50` | `vis/` 和 `outputs/` 下的结果名 | 新实验必须修改 |
+| `input_mode` | `auto` | 自动区分普通图片和三维光声 TIFF | 通常不改 |
+| `photoacoustic_baseline` | 2048 | 光声交流信号零点 | 采集零点改变时才改 |
+| `photoacoustic_projection_axis` | 0 | 固定沿第 0 维最大投影 | 不改 |
+| `raw_measurement_dir` | `data/raw_photoacoustic_measurements` | 真实三维 TIFF 测量目录 | 导入真实数据时修改 |
 | `size` | 256 | 正方形计算尺寸，必须为正偶数 | 一般不改 |
 | `aperture_height` | `None` | `None` 表示整个方形区域都有光 | 一般不改 |
 | `num_frames` | 50 | SLM 相位和调制测量数量 | 正式实验一般保持 50 |
@@ -257,7 +273,7 @@ data/SCENE_NAME/slm_png/slm_phase_0001.png ... 0050.png
 `SLM_simN.mat` 中的变量名必须是 `proj_sim`。相位 PNG 只是包裹相位预览，
 不是某台真实 SLM 已标定的灰度图。
 
-### 步骤三：模拟 50 张调制测量
+### 步骤三 A：模拟 50 张调制测量
 
 运行：
 
@@ -275,6 +291,33 @@ data/SCENE_NAME/measurement_png/modulated_measurement_0001.png ... 0050.png
 
 `SLM_rawN.mat` 中的变量名必须是 `imsdata`。每张图都由清晰物体直接生成，
 不是在基准模糊图上继续卷积。
+
+### 步骤三 B：导入真实三维光声测量（与三 A 二选一）
+
+如果已经用步骤二的相位完成真实采集，就不要运行仿真版步骤三。先把正好
+`num_frames` 个三维 TIFF 放进 `raw_measurement_dir`，再运行：
+
+```text
+step3_import_photoacoustic_measurements.py
+```
+
+文件会按名称中的数字自然排序，例如 `capture_2.tif` 会排在
+`capture_10.tif` 前。第 n 个 TIFF 必须对应 `SLM_simN.mat` 的第 n 张相位。
+每帧执行：
+
+```text
+corrected = max(raw_volume - 2048, 0)
+imsdata = max(corrected, axis=0)
+```
+
+重要约定：
+
+- 不要求三维 TIFF 有 512 层，只要求确实是非空三维数组；
+- 投影后尺寸必须与 `size×size` 一致，真实测量不会被静默裁剪或缩放；
+- `SLM_rawN.mat:imsdata` 保存未单独归一化的二维投影；
+- 50 帧只使用一个数据集全局最大值供网络归一化；
+- PNG 预览也共享这个最大值，不会逐帧拉伸亮度；
+- 这样能保留不同 SLM 帧之间真实的相对强度，网络才能正确使用它们。
 
 ### 步骤四：运行 NeuWS 网络重建
 
@@ -381,6 +424,7 @@ outputs/SCENE_NAME/evaluation/     # 指标、误差和最终图
 | `utils.py` | 网络使用的 FFT 卷积、Zernike 等旧共享函数 | 一般不修改 |
 | `evaluation.py` | PSNR、SSIM、配准和相位误差算法 | 一般不修改 |
 | `image_utils.py` | 图片读取、归一化和 16 位 PNG 保存 | 一般不修改 |
+| `preprocessing/photoacoustic.py` | 三维光声减 2048、负值置零和第 0 维投影 | 一般不修改 |
 | `aberration_config.py` | 解析显式 Zernike 系数 | 任务 A 的底层支持 |
 | `MIGRATION.md` | MATLAB 到 Python 的迁移边界 | 需要理解迁移时阅读 |
 
@@ -393,6 +437,7 @@ outputs/SCENE_NAME/evaluation/     # 指标、误差和最终图
 | `step1_prepare_ground_truth.py` | 准备清晰物体、固定像差和基准图 |
 | `step2_generate_slm_patterns.py` | 生成已知 SLM 相位 |
 | `step3_simulate_measurements.py` | 直接生成调制测量 |
+| `step3_import_photoacoustic_measurements.py` | 把真实三维光声 TIFF 转成网络测量文件 |
 | `step4_reconstruct.py` | 调用 NeuWS 网络恢复 |
 | `step5_evaluate.py` | 生成图像/相位指标和总览图 |
 
@@ -472,15 +517,27 @@ training_batch_size=4
 
 不要先改变相位符号、物理模型或数据变量名。
 
+### 10.9 三维 TIFF 提示尺寸不匹配
+
+真实测量投影后必须恰好是配置中的 `size×size`。这项检查防止相机图与 SLM
+坐标关系被自动缩放破坏。请核对采集尺寸，或在开始步骤一前把 `size` 设置成
+真实投影尺寸并重新生成该运行目录。
+
+### 10.10 三维 TIFF 层数不是 512
+
+这是允许的。当前代码不检查固定层数；无论是几十层、512 层还是其他正层数，
+都始终沿第 0 维做最大投影。
+
 ## 11. 怎样替换成真实实验
 
 真实实验时保留步骤二生成的 SLM 相位，用真实 SLM 和相机替代步骤三：
 
 1. 从 `SLM_simN.mat:proj_sim` 读取精确相位；
 2. 使用设备专用 LUT、gamma 和电压标定转换成真实 SLM 灰度；
-3. 逐帧显示相位并采集相机图像；
-4. 将第 n 张相机图保存为 `SLM_rawN.mat`，变量名必须是 `imsdata`；
-5. 文件从 1 连续编号，中间不能缺失；
+3. 逐帧显示相位并采集三维 TIFF；
+4. 将所有 TIFF 放入 `raw_measurement_dir`，名称顺序必须与 SLM 顺序对应；
+5. 运行 `step3_import_photoacoustic_measurements.py`，自动完成减 2048、置零、
+   第 0 维投影和 `SLM_rawN.mat:imsdata` 写入；
 6. 继续运行步骤四进行恢复。
 
 当前输出的 16 位相位 PNG 不是硬件标定结果，不能直接假设它与某台 SLM
@@ -516,6 +573,7 @@ log/2026-07-30_NeuWS完整静态仿真与CUDA重建.md
 - [ ] 按顺序完成 step1 到 step5；
 - [ ] 找到了系统像差相位图和 50 张 SLM 相位图；
 - [ ] 找到了 50 张调制测量图；
+- [ ] 若使用真实三维光声数据，确认运行的是导入版步骤三且 TIFF 顺序正确；
 - [ ] 找到了 `reconstructed_object.png`；
 - [ ] 找到了 `reconstructed_aberration_phase.png`；
 - [ ] 打开了 `reconstruction_comparison.png`；

@@ -1,13 +1,25 @@
-# NeuWS: Neural Wavefront Shaping
+# PAWavefrontLab
+
+**Photoacoustic wavefront simulation, measurement preprocessing, and neural reconstruction.**
+
+PAWavefrontLab is a research workflow built around the NeuWS reconstruction
+method. It adds Python/AOtools closed-loop simulation, photoacoustic TIFF/BIN
+preprocessing, real-measurement import, reconstruction evaluation, and
+reproducible experiment entry points.
+
+NeuWS remains the name of the upstream algorithm and its compatible data
+contract; it is not the name of this extended project. See [NOTICE.md](NOTICE.md)
+for upstream attribution, the extension boundary, and redistribution constraints.
 
 ## 中文快速入口（第一次使用请先看这里）
 
-这个项目可以完成三类任务：
+这个项目可以完成四类任务：
 
 | 目标 | 从哪里开始 | 主要输出 |
 | --- | --- | --- |
 | 给一张清晰图片添加指定 Zernike 像差 | 编辑并运行 `run_single_image.py` | 像差相位图、PSF、模糊图 |
 | 完整运行“生成相位→模拟测量→网络恢复→评价” | 阅读 [`workflows/static_simulation/README.md`](workflows/static_simulation/README.md) | 50 张 SLM 相位、50 张测量图、恢复图像和恢复像差 |
+| 导入三维光声 TIFF 后运行 NeuWS | 步骤二后运行 `step3_import_photoacoustic_measurements.py` | 减 2048、置零、第 0 维投影后的 `SLM_rawN.mat` |
 | 使用自己的 MATLAB/相机数据重建 | 查看下方“Static reconstruction”和“Data contract” | `final_I_est.mat`、`final_aberration.mat` |
 
 如果你的目标是第一次完整复现今天验证过的仿真，请不要从旧的
@@ -41,11 +53,14 @@
 
 **[`log/2026-07-30_NeuWS完整静态仿真与CUDA重建.md`](log/2026-07-30_NeuWS完整静态仿真与CUDA重建.md)**
 
-This repository contains the code for “NeuWS: Neural Wavefront Shaping for Guidestar-Free Imaging Through Static and Dynamic Scattering Media” and a Python/AOtools closed-loop workflow for generating SLM patterns, simulating measurements, reconstructing a static scene, and evaluating the result.
+PAWavefrontLab uses and extends code associated with “NeuWS: Neural Wavefront
+Shaping for Guidestar-Free Imaging Through Static and Dynamic Scattering Media”.
+The NeuWS name below refers to that upstream method, model, and data format.
 
 - [Paper](https://pmc.ncbi.nlm.nih.gov/articles/PMC10306297/)
 - [Dryad dataset and format description](https://datadryad.org/dataset/doi%3A10.5061/dryad.6t1g1jx42)
 - [Original upstream repository](https://github.com/Intelligent-Sensing/NeuWS)
+- [Upstream attribution and project boundary](NOTICE.md)
 
 ## Verified local environment
 
@@ -101,6 +116,10 @@ and run these files in order from VS Code:
 3. `step3_simulate_measurements.py` reads the saved object, system aberration and
    SLM phases and creates every camera frame directly from their combined pupil.
    It never applies another blur to the baseline aberrated image.
+   For acquired 3-D photoacoustic TIFF stacks, run
+   `step3_import_photoacoustic_measurements.py` instead: it computes
+   `max(raw - 2048, 0)` and then an axis-0 maximum projection, without requiring
+   a fixed 512-layer depth.
 4. `step4_reconstruct.py` supplies only the 50 measurements and their known SLM
    phases to the static NeuWS network. The system-aberration ground truth is not
    supplied to the network.
