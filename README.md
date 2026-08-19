@@ -298,17 +298,18 @@ Missing indices, missing variables, empty arrays, non-square or odd-sized measur
 
 ## Tests
 
-Run the CPU test suite with:
+Run the complete CPU test suite with pytest. Pytest also collects the existing
+`unittest.TestCase` tests, so both test styles run through one entry point:
 
 ```bash
-python -m unittest discover -s tests -v
+python -m pytest -q
 ```
 
 The large `1000×1000` CUDA acceptance test is opt-in because it consumes substantial GPU memory:
 
 ```bash
-NEUWS_RUN_LARGE_CUDA=1 python -m unittest \
-  tests.test_optics_and_evaluation.LargeCudaTests -v
+NEUWS_RUN_LARGE_CUDA=1 python -m pytest -q \
+  tests/test_optics_and_evaluation.py::LargeCudaTests::test_1000_forward_backward
 ```
 
 See [MIGRATION.md](MIGRATION.md) for the MATLAB-to-Python mapping and scope decisions.
