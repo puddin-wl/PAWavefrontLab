@@ -29,6 +29,13 @@ class OpticsTests(unittest.TestCase):
         ]
         self.assertEqual([zernIndex(index) for index in range(1, 16)], expected)
 
+    def test_noll_136_completes_radial_order_fifteen(self):
+        self.assertEqual(zernIndex(121), [15, -1])
+        self.assertEqual(zernIndex(136), [15, 15])
+        basis = zernike_basis_numpy(136, 32)
+        self.assertEqual(basis.shape, (136, 32, 32))
+        self.assertTrue(np.isfinite(basis).all())
+
     def test_paper_geometry_and_even_validation(self):
         self.assertEqual(default_aperture_height(256), 256)
         self.assertEqual(default_aperture_height(1000), 1000)
@@ -68,6 +75,34 @@ class OpticsTests(unittest.TestCase):
         self.assertTrue(torch.isfinite(gaussian).all())
         self.assertAlmostEqual(float(zernike.abs().square()[mask].mean()), 1.0, places=6)
         self.assertAlmostEqual(float(gaussian.abs().square()[mask].mean()), 1.0, places=5)
+
+    def test_static_network_supports_136_zernike_features_on_cpu(self):
+        from networks import StaticDiffuseNet
+
+        size = 16
+        batch_size = 2
+        network = StaticDiffuseNet(
+            size,
+            size,
+            phs_layers=1,
+            bsize=batch_size,
+            static_phase=True,
+            zernike_features=136,
+        )
+        self.assertEqual(network.basis.shape, (batch_size, size, size, 136))
+        phase = torch.zeros((batch_size, size, size))
+        from optics import slm_complex_field
+
+        slm = slm_complex_field(phase, size).unsqueeze(1)
+        output, _, _, _, _ = network(slm, torch.zeros(batch_size))
+        output.mean().backward()
+        self.assertTrue(torch.isfinite(output).all())
+        self.assertTrue(
+            all(
+                parameter.grad is None or torch.isfinite(parameter.grad).all()
+                for parameter in network.parameters()
+            )
+        )
 
 
 class EvaluationTests(unittest.TestCase):
@@ -115,3 +150,32 @@ class LargeCudaTests(unittest.TestCase):
         output, _, _, _, _ = network(slm, torch.tensor([-0.5], device="cuda"))
         output.mean().backward()
         self.assertTrue(torch.isfinite(output).all())
+
+
+@unittest.skipUnless(
+    torch.cuda.is_available() and os.environ.get("NEUWS_RUN_RADIAL15_CUDA") == "1",
+    "Set NEUWS_RUN_RADIAL15_CUDA=1 to run the radial-order-15 CUDA smoke test.",
+)
+class Radial15CudaTests(unittest.TestCase):
+    def test_256_forward_backward_with_136_features(self):
+        from networks import StaticDiffuseNet
+        from optics import slm_complex_field
+
+        size = 256
+        batch_size = 8
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+        network = StaticDiffuseNet(
+            size,
+            size,
+            phs_layers=4,
+            bsize=batch_size,
+            static_phase=True,
+            zernike_features=136,
+        ).cuda()
+        phase = torch.zeros((batch_size, size, size), device="cuda")
+        slm = slm_complex_field(phase, size).unsqueeze(1)
+        output, _, _, _, _ = network(slm, torch.zeros(batch_size, device="cuda"))
+        output.mean().backward()
+        self.assertTrue(torch.isfinite(output).all())
+        print(f"peak_cuda_memory_bytes={torch.cuda.max_memory_allocated()}")

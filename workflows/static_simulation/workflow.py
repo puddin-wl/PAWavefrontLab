@@ -59,9 +59,12 @@ class SimulationSettings:
     num_frames: int = 50
     system_noll_start: int = 4
     system_noll_end: int = 15
+    system_num_modes: int = SYSTEM_NUM_MODES
+    system_disabled_noll_indices: tuple[int, ...] = ()
     system_sigma: float = 0.6
     system_seed: int = 20260730
     slm_num_modes: int = 15
+    slm_disabled_noll_indices: tuple[int, ...] = ()
     slm_sigma: float = 5.0
     slm_seed: int = 20260731
     phase_sign: int = -1
@@ -72,6 +75,7 @@ class SimulationSettings:
     training_device: str = "cuda"
     training_epochs: int = 1000
     training_batch_size: int = 8
+    network_zernike_features: int = SYSTEM_NUM_MODES
     phase_layers: int = 4
     initial_learning_rate: float = 1e-3
     final_learning_rate: float = 1e-3
@@ -103,12 +107,28 @@ class SimulationSettings:
             raise ValueError("scene_name 不能为空。")
         if self.num_frames <= 0:
             raise ValueError("num_frames 必须为正数。")
-        if not 1 <= self.system_noll_start <= self.system_noll_end <= SYSTEM_NUM_MODES:
-            raise ValueError("系统像差 Noll 范围必须位于 1 到 28。")
+        if self.system_num_modes <= 0:
+            raise ValueError("system_num_modes 必须为正数。")
+        if not 1 <= self.system_noll_start <= self.system_noll_end <= self.system_num_modes:
+            raise ValueError(
+                f"系统像差 Noll 范围必须位于 1 到 {self.system_num_modes}。"
+            )
         if self.system_sigma < 0 or self.slm_sigma < 0 or self.noise_std < 0:
             raise ValueError("所有标准差都必须为非负数。")
         if self.slm_num_modes <= 0:
             raise ValueError("slm_num_modes 必须为正数。")
+        if self.network_zernike_features <= 0:
+            raise ValueError("network_zernike_features 必须为正数。")
+        self._validate_disabled_noll_indices(
+            self.system_disabled_noll_indices,
+            self.system_num_modes,
+            "system_disabled_noll_indices",
+        )
+        self._validate_disabled_noll_indices(
+            self.slm_disabled_noll_indices,
+            self.slm_num_modes,
+            "slm_disabled_noll_indices",
+        )
         if self.phase_sign not in (-1, 1):
             raise ValueError("phase_sign 必须为 -1 或 1。")
         if self.simulation_batch_size <= 0 or self.training_batch_size <= 0:
@@ -122,14 +142,26 @@ class SimulationSettings:
         if self.photoacoustic_projection_axis != 0:
             raise ValueError("按照旧代码约定，photoacoustic_projection_axis 必须固定为 0。")
 
+    @staticmethod
+    def _validate_disabled_noll_indices(
+        indices: tuple[int, ...], num_modes: int, name: str
+    ) -> None:
+        values = tuple(indices)
+        if len(values) != len(set(values)):
+            raise ValueError(f"{name} 不能包含重复项。")
+        if any(not isinstance(index, int) or isinstance(index, bool) for index in values):
+            raise ValueError(f"{name} 必须只包含整数 Noll 编号。")
+        if any(index < 1 or index > num_modes for index in values):
+            raise ValueError(f"{name} 必须位于 1 到 {num_modes}。")
+
     def dataset_signature(self) -> dict:
         geometry = validate_geometry(self.size, self.aperture_height)
-        return {
+        signature = {
             "input_image": str(Path(self.input_image).expanduser().resolve()),
             "size": geometry.size,
             "aperture_height": geometry.aperture_height,
             "num_frames": self.num_frames,
-            "system_num_modes": SYSTEM_NUM_MODES,
+            "system_num_modes": self.system_num_modes,
             "system_noll_range": [self.system_noll_start, self.system_noll_end],
             "system_sigma_rad": self.system_sigma,
             "system_seed": self.system_seed,
@@ -140,18 +172,31 @@ class SimulationSettings:
             "noise_std": self.noise_std,
             "noise_seed": self.noise_seed,
         }
+        # Keep the default signature byte-for-byte compatible with existing schema-v1 runs.
+        if self.system_disabled_noll_indices:
+            signature["system_disabled_noll_indices"] = list(
+                self.system_disabled_noll_indices
+            )
+        if self.slm_disabled_noll_indices:
+            signature["slm_disabled_noll_indices"] = list(
+                self.slm_disabled_noll_indices
+            )
+        return signature
 
 
 def sample_system_aberration_coefficients(settings: SimulationSettings) -> np.ndarray:
     """Draw one reproducible system aberration and leave all other Noll terms at zero."""
     settings.validate()
-    coefficients = np.zeros(SYSTEM_NUM_MODES, dtype=np.float32)
+    coefficients = np.zeros(settings.system_num_modes, dtype=np.float32)
     rng = np.random.default_rng(settings.system_seed)
     start = settings.system_noll_start - 1
     stop = settings.system_noll_end
     coefficients[start:stop] = rng.normal(
         0.0, settings.system_sigma, size=stop - start
     ).astype(np.float32)
+    if settings.system_disabled_noll_indices:
+        disabled = np.asarray(settings.system_disabled_noll_indices, dtype=np.int64) - 1
+        coefficients[disabled] = 0.0
     return coefficients
 
 
@@ -379,6 +424,9 @@ def generate_slm_patterns(settings: SimulationSettings) -> dict:
     coefficients = sample_slm_coefficients(
         settings.num_frames, settings.slm_num_modes, settings.slm_sigma, settings.slm_seed
     )
+    if settings.slm_disabled_noll_indices:
+        disabled = np.asarray(settings.slm_disabled_noll_indices, dtype=np.int64) - 1
+        coefficients[:, disabled] = 0.0
     basis = zernike_basis_numpy(settings.slm_num_modes, geometry.size)
     full_patterns = np.einsum("fm,mhw->fhw", coefficients, basis, optimize=True)
     top = (geometry.size - geometry.aperture_height) // 2
@@ -606,6 +654,8 @@ def reconstruct_static_scene(settings: SimulationSettings) -> Path:
         str(settings.training_batch_size),
         "--phs_layers",
         str(settings.phase_layers),
+        "--zernike_features",
+        str(settings.network_zernike_features),
         "--init_lr",
         str(settings.initial_learning_rate),
         "--final_lr",
@@ -690,6 +740,7 @@ def reconstruct_static_scene(settings: SimulationSettings) -> Path:
         "epochs": settings.training_epochs,
         "batch_size": settings.training_batch_size,
         "phase_layers": settings.phase_layers,
+        "network_zernike_features": settings.network_zernike_features,
         "object_radiometric_scale": measurement_scale,
     }
     _write_manifest(settings, manifest)
@@ -742,6 +793,16 @@ def evaluate_reconstruction(settings: SimulationSettings) -> dict:
             "initial_loss": loss_history[0] if loss_history else None,
             "final_loss": loss_history[-1] if loss_history else None,
             "minimum_loss": min(loss_history) if loss_history else None,
+            "batch_size": training_summary.get("batch_size"),
+            "network_zernike_features": training_summary.get(
+                "network_zernike_features"
+            ),
+            "peak_cuda_memory_bytes": training_summary.get(
+                "peak_cuda_memory_bytes"
+            ),
+            "peak_cuda_memory_reserved_bytes": training_summary.get(
+                "peak_cuda_memory_reserved_bytes"
+            ),
             "object_radiometric_scale": manifest.get("measurement_max"),
         },
     }
@@ -805,3 +866,81 @@ def evaluate_reconstruction(settings: SimulationSettings) -> dict:
     _write_manifest(settings, manifest)
     print(f"步骤五完成：定量指标和总览图保存在 {output_dir}")
     return report
+
+
+def compare_reconstruction_with_baseline(
+    settings: SimulationSettings, baseline_report_path: Path
+) -> dict:
+    """Write a compact metric comparison after stage five has completed."""
+    report_path = settings.report_dir / "reconstruction_report.json"
+    if not report_path.is_file():
+        raise FileNotFoundError(f"缺少当前实验评价报告：{report_path}")
+    baseline_report_path = Path(baseline_report_path).expanduser().resolve()
+    if not baseline_report_path.is_file():
+        raise FileNotFoundError(f"缺少基线评价报告：{baseline_report_path}")
+    current_report = json.loads(report_path.read_text(encoding="utf-8"))
+    baseline_report = json.loads(baseline_report_path.read_text(encoding="utf-8"))
+
+    def headline_metrics(report: dict) -> dict:
+        image = report["reconstructed_image"]["registered"]
+        phase = report["reconstructed_system_aberration"][
+            "primary_piston_tip_tilt_removed"
+        ]
+        return {
+            "psnr_db": float(image["psnr_db"]),
+            "ssim": float(image["ssim"]),
+            "phase_rmse_rad": float(phase["rmse_rad"]),
+            "training_elapsed_seconds": report.get("training", {}).get(
+                "elapsed_seconds"
+            ),
+        }
+
+    baseline = headline_metrics(baseline_report)
+    current = headline_metrics(current_report)
+    delta = {
+        key: (
+            float(current[key]) - float(baseline[key])
+            if current[key] is not None and baseline[key] is not None
+            else None
+        )
+        for key in current
+    }
+    comparison = {
+        "baseline_scene_name": baseline_report.get("scene_name"),
+        "current_scene_name": current_report.get("scene_name"),
+        "baseline": baseline,
+        "current": current,
+        "delta_current_minus_baseline": delta,
+        "comparison_note": (
+            "System-aberration expected total coefficient RMS is approximately "
+            "matched. The SLM uses the radial-order-15 preview sigma of 1.22 rad, "
+            "so this is not a fully equal-strength controlled comparison."
+        ),
+    }
+    comparison_path = settings.report_dir / "comparison_to_test_static_zernike_50.json"
+    comparison_path.write_text(
+        json.dumps(_json_safe(comparison), indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+    labels = ["Noll 1–15", "Radial n=15"]
+    panels = (
+        ("psnr_db", "PSNR (dB)", True),
+        ("ssim", "SSIM", True),
+        ("phase_rmse_rad", "PTT-removed phase RMSE (rad)", False),
+    )
+    for axis, (key, title, higher_is_better) in zip(axes, panels):
+        values = [baseline[key], current[key]]
+        colors = ["#4C78A8", "#F58518"]
+        axis.bar(labels, values, color=colors)
+        axis.set_title(title)
+        axis.tick_params(axis="x", rotation=15)
+        direction = "higher is better" if higher_is_better else "lower is better"
+        axis.set_xlabel(direction)
+        for index, value in enumerate(values):
+            axis.text(index, value, f"{value:.5g}", ha="center", va="bottom")
+    fig.tight_layout()
+    fig.savefig(settings.report_dir / "radial15_vs_baseline.png", dpi=150)
+    plt.close(fig)
+    return comparison

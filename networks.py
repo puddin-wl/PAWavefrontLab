@@ -205,13 +205,15 @@ class G_SpaceTime(nn.Module):
 
 
 class TemporalZernNet(nn.Module):
-    def __init__(self, width, PSF_size, phs_layers = 2, use_FFT=True, bsize=8, use_pe=False, static_phase=True):
+    def __init__(self, width, PSF_size, phs_layers = 2, use_FFT=True, bsize=8, use_pe=False, static_phase=True, zernike_features=28):
         super().__init__()
+        if zernike_features <= 0:
+            raise ValueError("zernike_features must be positive.")
         self.g_im = G_PatchTensor(width)
 
         if not use_pe:
             self.basis = nn.Parameter(compute_zernike_basis(
-                num_polynomials=28,
+                num_polynomials=zernike_features,
                 field_res=(PSF_size, PSF_size)).permute(1, 2, 0).unsqueeze(0).repeat(bsize, 1, 1, 1),
                 requires_grad=False)
         else:
@@ -280,8 +282,8 @@ class TemporalZernNet(nn.Module):
 
 
 class StaticDiffuseNet(TemporalZernNet):
-    def __init__(self, width, PSF_size, phs_layers = 2, use_FFT=True, bsize=8, use_pe=False, static_phase=True):
-        super().__init__(width, PSF_size, phs_layers = phs_layers, use_FFT=use_FFT, bsize=bsize, use_pe=use_pe)
+    def __init__(self, width, PSF_size, phs_layers = 2, use_FFT=True, bsize=8, use_pe=False, static_phase=True, zernike_features=28):
+        super().__init__(width, PSF_size, phs_layers = phs_layers, use_FFT=use_FFT, bsize=bsize, use_pe=use_pe, static_phase=static_phase, zernike_features=zernike_features)
 
         hidden_dim = 32
         t_dim = 1 if not static_phase else 0
@@ -331,8 +333,8 @@ class StaticDiffuseNet(TemporalZernNet):
 
 
 class MovingTemporalZernNet(TemporalZernNet):
-    def __init__(self, width, PSF_size, phs_layers = 5, use_FFT=True, bsize=8, use_pe=False, static_phase=True):
-        super().__init__(width, PSF_size, use_pe=False, phs_layers=phs_layers, use_FFT=use_FFT, bsize=bsize)
+    def __init__(self, width, PSF_size, phs_layers = 5, use_FFT=True, bsize=8, use_pe=False, static_phase=True, zernike_features=28):
+        super().__init__(width, PSF_size, use_pe=use_pe, phs_layers=phs_layers, use_FFT=use_FFT, bsize=bsize, static_phase=static_phase, zernike_features=zernike_features)
         self.g_im = G_SpaceTime(width, width, bsize)
 
         in_dim = self.basis.shape[-1]
@@ -390,8 +392,8 @@ class MovingTemporalZernNet(TemporalZernNet):
 
 
 class MovingDiffuse(TemporalZernNet):
-    def __init__(self, width, PSF_size, phs_layers = 5, use_FFT=True, bsize=8, use_pe=False, static_phase=True):
-        super().__init__(width, PSF_size, phs_layers=phs_layers, use_FFT=use_FFT, bsize=bsize, static_phase=static_phase)
+    def __init__(self, width, PSF_size, phs_layers = 5, use_FFT=True, bsize=8, use_pe=False, static_phase=True, zernike_features=28):
+        super().__init__(width, PSF_size, phs_layers=phs_layers, use_FFT=use_FFT, bsize=bsize, use_pe=use_pe, static_phase=static_phase, zernike_features=zernike_features)
         self.g_im = G_SpaceTime(width, width, bsize)
 
         self.PSF_size = PSF_size
@@ -455,7 +457,6 @@ class MovingDiffuse(TemporalZernNet):
             y = torch.stack(y, axis=0)
 
         return y, _kernel, sim_g, sim_phs, I_est
-
 
 
 

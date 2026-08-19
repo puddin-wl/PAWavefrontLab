@@ -120,6 +120,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--slm_prefix", default="SLM_sim")
     parser.add_argument("--zero_freq", default=-1, type=int)
     parser.add_argument("--phs_layers", default=2, type=int)
+    parser.add_argument("--zernike_features", default=28, type=int)
     parser.add_argument("--dynamic_scene", action="store_true")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--seed", default=0, type=int)
@@ -128,8 +129,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
-    if args.num_epochs <= 0 or args.batch_size <= 0:
-        raise ValueError("--num_epochs and --batch_size must be positive.")
+    if args.num_epochs <= 0 or args.batch_size <= 0 or args.zernike_features <= 0:
+        raise ValueError("--num_epochs, --batch_size and --zernike_features must be positive.")
     if args.early_stop_patience < 0 or args.early_stop_warmup < 0:
         raise ValueError("Early-stopping patience and warmup must be non-negative.")
     if args.early_stop_window <= 0 or args.early_stop_min_delta < 0:
@@ -151,6 +152,7 @@ def main() -> None:
     device = _resolve_device(args.device)
     if device.type == "cuda":
         torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats(device)
     print(f"Using PyTorch {torch.__version__} on {device}")
 
     dataset = BatchDataset(
@@ -183,6 +185,7 @@ def main() -> None:
         bsize=args.batch_size,
         phs_layers=args.phs_layers,
         static_phase=args.static_phase,
+        zernike_features=args.zernike_features,
     ).to(device)
     image_optimizer = torch.optim.Adam(network.g_im.parameters(), lr=args.init_lr)
     phase_optimizer = torch.optim.Adam(network.g_g.parameters(), lr=args.init_lr)
@@ -348,10 +351,17 @@ def main() -> None:
         "requested_num_epochs": args.num_epochs,
         "batch_size": args.batch_size,
         "phase_layers": args.phs_layers,
+        "network_zernike_features": args.zernike_features,
         "static_phase": args.static_phase,
         "measurement_normalization_max": dataset.max_intensity,
         "loss_history": loss_history,
         "elapsed_seconds": elapsed,
+        "peak_cuda_memory_bytes": (
+            int(torch.cuda.max_memory_allocated(device)) if device.type == "cuda" else None
+        ),
+        "peak_cuda_memory_reserved_bytes": (
+            int(torch.cuda.max_memory_reserved(device)) if device.type == "cuda" else None
+        ),
         "early_stopping": {
             "enabled": args.early_stop_patience > 0,
             "stopped_early": stopped_early,

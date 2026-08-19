@@ -1,6 +1,8 @@
 import json
+import math
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -71,6 +73,36 @@ class StaticSimulationWorkflowTests(unittest.TestCase):
             self.assertTrue(np.all(first[15:] == 0))
             self.assertTrue(np.any(first[3:15] != 0))
 
+    def test_radial15_coefficients_are_reproducible_and_disable_tip_tilt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = replace(
+                make_settings(Path(temporary)),
+                system_noll_end=136,
+                system_num_modes=136,
+                system_sigma=0.6 * math.sqrt(12.0 / 133.0),
+                slm_num_modes=136,
+                slm_disabled_noll_indices=(2, 3),
+                slm_sigma=1.22,
+                network_zernike_features=136,
+            )
+            first = sample_system_aberration_coefficients(settings)
+            second = sample_system_aberration_coefficients(settings)
+            self.assertTrue(np.array_equal(first, second))
+            self.assertEqual(first.shape, (136,))
+            self.assertTrue(np.all(first[:3] == 0))
+            self.assertTrue(np.any(first[3:] != 0))
+            prepare_ground_truth(settings)
+            generate_slm_patterns(settings)
+            slm = np.load(settings.data_dir / "slm_coefficients.npy")
+            self.assertEqual(slm.shape, (settings.num_frames, 136))
+            self.assertTrue(np.all(slm[:, 1:3] == 0))
+            self.assertTrue(np.any(slm[:, 135] != 0))
+            manifest = json.loads((settings.data_dir / "manifest.json").read_text())
+            self.assertEqual(manifest["dataset_settings"]["system_num_modes"], 136)
+            self.assertEqual(
+                manifest["dataset_settings"]["slm_disabled_noll_indices"], [2, 3]
+            )
+
     def test_measurements_use_clear_object_and_combined_pupil_directly(self):
         with tempfile.TemporaryDirectory() as temporary:
             settings = make_settings(Path(temporary))
@@ -133,6 +165,35 @@ class StaticSimulationWorkflowTests(unittest.TestCase):
             training = report["training"]
             self.assertEqual(training["epochs"], settings.training_epochs)
             self.assertLessEqual(training["minimum_loss"], training["initial_loss"])
+            self.assertTrue(
+                np.isfinite(
+                    report["reconstructed_system_aberration"][
+                        "primary_piston_tip_tilt_removed"
+                    ]["rmse_rad"]
+                )
+            )
+
+    def test_radial15_small_five_stage_closure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = replace(
+                make_settings(Path(temporary), "radial15_closed_loop"),
+                system_noll_end=136,
+                system_num_modes=136,
+                system_sigma=0.6 * math.sqrt(12.0 / 133.0),
+                slm_num_modes=136,
+                slm_disabled_noll_indices=(2, 3),
+                slm_sigma=1.22,
+                network_zernike_features=136,
+                training_epochs=2,
+            )
+            prepare_ground_truth(settings)
+            generate_slm_patterns(settings)
+            simulate_modulated_measurements(settings)
+            reconstruct_static_scene(settings)
+            report = evaluate_reconstruction(settings)
+            self.assertEqual(report["training"]["network_zernike_features"], 136)
+            self.assertEqual(report["training"]["batch_size"], 2)
+            self.assertIsNone(report["training"]["peak_cuda_memory_bytes"])
             self.assertTrue(
                 np.isfinite(
                     report["reconstructed_system_aberration"][

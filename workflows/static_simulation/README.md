@@ -223,6 +223,29 @@ scene_name="my_first_simulation",
 修改随机种子会得到一组新的、但仍可复现的数据。系统像差只在步骤一抽样
 一次，后续步骤读取保存结果，不会偷偷重新抽样。
 
+### 5.3 径向 15 阶完整闭环入口
+
+项目保留上面的 Noll 1–15 默认实验，同时提供独立的径向 15 阶配置。这里的
+“径向 15 阶”表示完整使用到 Noll 136，而不是只使用 Noll 15：
+
+```bash
+python workflows/static_simulation/run_radial15_simulation.py
+```
+
+该入口固定使用 `data/test.tif`、256×256、50 帧和 1000 轮 CUDA 训练。SLM
+使用 Noll 1、4–136（Noll 2、3 置零），单项标准差为 1.22 rad；系统像差使用
+Noll 4–136，网络空间特征也使用 136 项。运行前会实际执行一次 CUDA 前向、
+反向和优化器步进；batch=8 显存不足时依次尝试 4、2、1。所有数据写入新的
+`test_static_radial15_both_50` 目录，不会覆盖原来的 `test_static_zernike_50`。
+
+一般实验也可以在 `SimulationSettings` 中分别配置：
+
+- `system_num_modes` 和 `system_disabled_noll_indices`；
+- `slm_num_modes` 和 `slm_disabled_noll_indices`；
+- `network_zernike_features`。
+
+这些参数默认仍为原来的 28 项系统/网络基底和 15 项 SLM，因此旧入口无需修改。
+
 ## 6. 五个步骤怎么运行
 
 必须按顺序运行。每个文件都可以在 VS Code 中打开后点击右上角
