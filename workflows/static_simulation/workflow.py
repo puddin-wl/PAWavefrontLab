@@ -897,6 +897,15 @@ def compare_reconstruction_with_baseline(
 
     baseline = headline_metrics(baseline_report)
     current = headline_metrics(current_report)
+    active_system_modes = len(
+        set(range(settings.system_noll_start, settings.system_noll_end + 1))
+        - set(settings.system_disabled_noll_indices)
+    )
+    baseline_system_modes = 12
+    baseline_system_sigma = 0.6
+    expected_coefficient_l2_ratio = (
+        settings.system_sigma * math.sqrt(active_system_modes)
+    ) / (baseline_system_sigma * math.sqrt(baseline_system_modes))
     delta = {
         key: (
             float(current[key]) - float(baseline[key])
@@ -911,10 +920,20 @@ def compare_reconstruction_with_baseline(
         "baseline": baseline,
         "current": current,
         "delta_current_minus_baseline": delta,
+        "system_aberration_strength": {
+            "baseline_active_modes": baseline_system_modes,
+            "baseline_sigma_rad": baseline_system_sigma,
+            "current_active_modes": active_system_modes,
+            "current_sigma_rad": settings.system_sigma,
+            "expected_coefficient_l2_ratio_current_over_baseline": (
+                expected_coefficient_l2_ratio
+            ),
+        },
         "comparison_note": (
-            "System-aberration expected total coefficient RMS is approximately "
-            "matched. The SLM uses the radial-order-15 preview sigma of 1.22 rad, "
-            "so this is not a fully equal-strength controlled comparison."
+            f"The current system-aberration expected coefficient L2 norm is "
+            f"{expected_coefficient_l2_ratio:.3f} times the Noll 4–15 baseline. "
+            "The SLM uses the radial-order-15 preview sigma of 1.22 rad, so this "
+            "is not a fully equal-strength controlled comparison."
         ),
     }
     comparison_path = settings.report_dir / "comparison_to_test_static_zernike_50.json"
@@ -924,7 +943,7 @@ def compare_reconstruction_with_baseline(
     )
 
     fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-    labels = ["Noll 1–15", "Radial n=15"]
+    labels = ["Noll 1–15", f"Radial n=15\nσ={settings.system_sigma:g}"]
     panels = (
         ("psnr_db", "PSNR (dB)", True),
         ("ssim", "SSIM", True),

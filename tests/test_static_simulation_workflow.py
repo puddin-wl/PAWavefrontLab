@@ -21,6 +21,7 @@ from workflows.static_simulation.workflow import (
     sample_system_aberration_coefficients,
     simulate_modulated_measurements,
 )
+from workflows.static_simulation.run_radial15_simulation import build_settings
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,6 +64,17 @@ def make_settings(root: Path, name: str = "workflow") -> SimulationSettings:
 
 
 class StaticSimulationWorkflowTests(unittest.TestCase):
+    def test_radial15_runner_builds_a_separate_strength_run(self):
+        settings = build_settings("radial15_sigma_test", 0.5)
+        self.assertEqual(settings.scene_name, "radial15_sigma_test")
+        self.assertEqual(settings.data_dir.name, "radial15_sigma_test")
+        self.assertEqual(settings.system_sigma, 0.5)
+        self.assertEqual(settings.system_num_modes, 136)
+        with self.assertRaises(ValueError):
+            build_settings("nested/run", 0.5)
+        with self.assertRaises(ValueError):
+            build_settings("radial15_sigma_test", -0.1)
+
     def test_system_aberration_is_reproducible_and_limited_to_selected_modes(self):
         with tempfile.TemporaryDirectory() as temporary:
             settings = make_settings(Path(temporary))

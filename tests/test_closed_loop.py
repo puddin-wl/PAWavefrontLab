@@ -163,6 +163,14 @@ class ClosedLoopTests(unittest.TestCase):
             self.assertLess(summary["loss_history"][-1], summary["loss_history"][0])
             self.assertTrue((final_dir / "final_I_est.mat").is_file())
             self.assertTrue((final_dir / "final_aberration.mat").is_file())
+            aberration = sio.loadmat(final_dir / "final_aberration.mat")
+            self.assertTrue(
+                np.allclose(
+                    aberration["field"],
+                    np.exp(1j * aberration["phase"]),
+                    atol=1e-6,
+                )
+            )
             self.assertFalse((final_dir / "per_frame").exists())
 
     def test_loader_rejects_non_contiguous_numbering(self):
@@ -173,6 +181,16 @@ class ClosedLoopTests(unittest.TestCase):
             (data_dir / "SLM_sim2.mat").unlink()
             with self.assertRaisesRegex(ValueError, "continuous"):
                 BatchDataset(data_dir)
+
+    def test_loader_supports_per_frame_minmax_normalization(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data_dir = Path(temporary) / "data"
+            self._generate(data_dir)
+            dataset = BatchDataset(data_dir, normalization="per-frame-minmax")
+            for index in range(len(dataset)):
+                _, measurement, _ = dataset[index]
+                self.assertAlmostEqual(float(measurement.min()), 0.0, places=6)
+                self.assertAlmostEqual(float(measurement.max()), 1.0, places=6)
 
 
 if __name__ == "__main__":

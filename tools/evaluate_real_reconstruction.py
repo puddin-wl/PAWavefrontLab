@@ -39,10 +39,15 @@ def evaluate(args: argparse.Namespace) -> Path:
         raise FileExistsError(f"评价目录非空，为避免覆盖已停止：{output_dir}")
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    manifest_path = data_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    origin_only = bool(manifest.get("origin_only", False))
     ground_truth = np.load(data_dir / "reference" / "clear_object.npy", allow_pickle=False)
-    defocus_raw = np.load(
-        data_dir / "reference" / "defocus_projection.npy", allow_pickle=False
-    )
+    defocus_raw = None
+    if not origin_only:
+        defocus_raw = np.load(
+            data_dir / "reference" / "defocus_projection.npy", allow_pickle=False
+        )
     estimate_values = sio.loadmat(final_dir / "final_I_est_network_units.mat")
     estimate_raw = np.asarray(estimate_values["image"], dtype=np.float32).squeeze()
     aberration_values = sio.loadmat(final_dir / "final_aberration.mat")
@@ -52,14 +57,25 @@ def evaluate(args: argparse.Namespace) -> Path:
         (final_dir / "training_summary.json").read_text(encoding="utf-8")
     )
 
-    defocus = _minmax(defocus_raw, "defocus")
+    defocus = _minmax(defocus_raw, "defocus") if defocus_raw is not None else None
     reconstruction = _minmax(estimate_raw, "reconstruction")
     ground_truth = _minmax(ground_truth, "origin ground truth")
-    defocus_metrics, defocus_registered = evaluate_images(
-        ground_truth, defocus, register=True
-    )
+    defocus_metrics = defocus_registered = None
+    if defocus is not None:
+        defocus_metrics, defocus_registered = evaluate_images(
+            ground_truth, defocus, register=True
+        )
     reconstruction_metrics, reconstruction_registered = evaluate_images(
         ground_truth, reconstruction, register=True
+    )
+    reconstructed_shift = reconstruction_metrics["registered"]["shift_yx_pixels"]
+    registration_accepted = (
+        not origin_only or max(abs(value) for value in reconstructed_shift) <= 50
+    )
+    selected_reconstruction_values = (
+        reconstruction_metrics["registered"]
+        if registration_accepted
+        else reconstruction_metrics["raw"]
     )
 
     np.save(final_dir / "reconstructed_object_normalized.npy", reconstruction)
@@ -76,7 +92,7 @@ def evaluate(args: argparse.Namespace) -> Path:
     if defocus_registered is not None:
         np.save(output_dir / "registered_origin_for_defocus.npy", defocus_registered[0])
         np.save(output_dir / "registered_defocus.npy", defocus_registered[1])
-    if reconstruction_registered is not None:
+    if reconstruction_registered is not None and registration_accepted:
         np.save(
             output_dir / "registered_origin_for_reconstruction.npy",
             reconstruction_registered[0],
@@ -85,24 +101,24 @@ def evaluate(args: argparse.Namespace) -> Path:
             output_dir / "registered_reconstruction.npy", reconstruction_registered[1]
         )
 
-    defocus_registered_values = defocus_metrics["registered"]
     reconstruction_registered_values = reconstruction_metrics["registered"]
     report = {
         "scene_name": args.scene_name,
         "comparison_normalization": (
-            "origin, defocus and reconstruction are independently min-max normalized "
+            "origin and reconstruction are independently min-max normalized "
             "to [0,1]; this evaluates spatial reconstruction, not absolute radiometry"
         ),
-        "defocus_baseline": defocus_metrics,
+        "origin_only": origin_only,
         "reconstruction": reconstruction_metrics,
-        "registered_improvement_over_defocus": {
-            "psnr_db": float(
-                reconstruction_registered_values["psnr_db"]
-                - defocus_registered_values["psnr_db"]
-            ),
-            "ssim": float(
-                reconstruction_registered_values["ssim"]
-                - defocus_registered_values["ssim"]
+        "selected_comparison": {
+            "mode": "registered" if registration_accepted else "raw_same_coordinates",
+            "psnr_db": selected_reconstruction_values["psnr_db"],
+            "ssim": selected_reconstruction_values["ssim"],
+            "registration_accepted": registration_accepted,
+            "registration_rejection_reason": (
+                None
+                if registration_accepted
+                else "phase-correlation shift exceeds 50 pixels and is implausible for the same scan geometry"
             ),
         },
         "training": {
@@ -119,15 +135,38 @@ def evaluate(args: argparse.Namespace) -> Path:
             "not available because this real acquisition has no system-aberration phase ground truth"
         ),
     }
+    if defocus_metrics is not None:
+        defocus_registered_values = defocus_metrics["registered"]
+        report["comparison_normalization"] = (
+            "origin, defocus and reconstruction are independently min-max normalized "
+            "to [0,1]; this evaluates spatial reconstruction, not absolute radiometry"
+        )
+        report["defocus_baseline"] = defocus_metrics
+        report["registered_improvement_over_defocus"] = {
+            "psnr_db": float(
+                reconstruction_registered_values["psnr_db"]
+                - defocus_registered_values["psnr_db"]
+            ),
+            "ssim": float(
+                reconstruction_registered_values["ssim"]
+                - defocus_registered_values["ssim"]
+            ),
+        }
     (output_dir / "reconstruction_report.json").write_text(
         json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
 
     loss_history = np.asarray(training.get("loss_history", []), dtype=np.float64)
     fig, axes = plt.subplots(2, 3, figsize=(16, 10))
+    middle_image = defocus if defocus is not None else reconstruction
+    middle_title = (
+        "Defocus baseline"
+        if defocus is not None
+        else "NeuWS reconstruction (same coordinates)"
+    )
     panels = (
-        (ground_truth, "Origin ground truth", "gray", 0.0, 1.0),
-        (defocus, "Defocus baseline", "gray", 0.0, 1.0),
+        (ground_truth, "Origin reference", "gray", 0.0, 1.0),
+        (middle_image, middle_title, "gray", 0.0, 1.0),
         (reconstruction, "NeuWS reconstruction", "gray", 0.0, 1.0),
     )
     for axis, (image, title, cmap, vmin, vmax) in zip(axes[0], panels):
@@ -152,30 +191,44 @@ def evaluate(args: argparse.Namespace) -> Path:
         axes[1, 1].grid(True, alpha=0.3)
 
     axes[1, 2].axis("off")
+    metric_text = (
+        "Origin comparison\n\n"
+        f"Selected mode: {report['selected_comparison']['mode']}\n"
+        f"NeuWS PSNR: {selected_reconstruction_values['psnr_db']:.2f} dB\n"
+        f"NeuWS SSIM: {selected_reconstruction_values['ssim']:.3f}\n"
+        f"Auto shift: {reconstruction_registered_values['shift_yx_pixels']} px\n"
+        f"Registration accepted: {registration_accepted}\n"
+        f"Training stopped at epoch {training.get('num_epochs')}"
+    )
+    if defocus_metrics is not None:
+        metric_text = (
+            "Registered comparison\n\n"
+            f"Defocus PSNR: {defocus_registered_values['psnr_db']:.2f} dB\n"
+            f"NeuWS PSNR: {reconstruction_registered_values['psnr_db']:.2f} dB\n"
+            f"Improvement: {report['registered_improvement_over_defocus']['psnr_db']:.2f} dB\n\n"
+            f"Defocus SSIM: {defocus_registered_values['ssim']:.3f}\n"
+            f"NeuWS SSIM: {reconstruction_registered_values['ssim']:.3f}\n"
+            f"Improvement: {report['registered_improvement_over_defocus']['ssim']:.3f}\n\n"
+            f"Recovered shift: {reconstruction_registered_values['shift_yx_pixels']} px\n"
+            f"Training stopped at epoch {training.get('num_epochs')}"
+        )
     axes[1, 2].text(
         0.02,
         0.98,
-        "Registered comparison\n\n"
-        f"Defocus PSNR: {defocus_registered_values['psnr_db']:.2f} dB\n"
-        f"NeuWS PSNR: {reconstruction_registered_values['psnr_db']:.2f} dB\n"
-        f"Improvement: {report['registered_improvement_over_defocus']['psnr_db']:.2f} dB\n\n"
-        f"Defocus SSIM: {defocus_registered_values['ssim']:.3f}\n"
-        f"NeuWS SSIM: {reconstruction_registered_values['ssim']:.3f}\n"
-        f"Improvement: {report['registered_improvement_over_defocus']['ssim']:.3f}\n\n"
-        f"Recovered shift: {reconstruction_registered_values['shift_yx_pixels']} px\n"
-        f"Training stopped at epoch {training.get('num_epochs')}",
+        metric_text,
         va="top",
         ha="left",
         fontsize=12,
         family="monospace",
     )
-    fig.suptitle("Real 600×600 NeuWS reconstruction", fontsize=16)
+    fig.suptitle(
+        f"Real {ground_truth.shape[0]}×{ground_truth.shape[1]} NeuWS reconstruction",
+        fontsize=16,
+    )
     fig.tight_layout()
     fig.savefig(output_dir / "reconstruction_comparison.png", dpi=150)
     plt.close(fig)
 
-    manifest_path = data_dir / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["reconstruction"] = {
         "completed": True,
         "directory": str(final_dir),

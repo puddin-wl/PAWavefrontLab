@@ -116,6 +116,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--static_phase", action="store_true")
     parser.add_argument("--num_workers", default=0, type=int)
     parser.add_argument("--max_intensity", default=0, type=float)
+    parser.add_argument(
+        "--normalization",
+        choices=("shared-max", "per-frame-minmax"),
+        default="shared-max",
+        help="Measurement scaling applied by BatchDataset.",
+    )
     parser.add_argument("--im_prefix", default="SLM_raw")
     parser.add_argument("--slm_prefix", default="SLM_sim")
     parser.add_argument("--zero_freq", default=-1, type=int)
@@ -162,6 +168,7 @@ def main() -> None:
         slm_prefix=args.slm_prefix,
         max_intensity=args.max_intensity,
         zero_freq=args.zero_freq,
+        normalization=args.normalization,
     )
     width = dataset.width
     if args.width is not None and args.width != width:
@@ -303,8 +310,12 @@ def main() -> None:
             image_np = np.clip(image_network_np, 0, 1)
             output_images_network_units.append(image_network_np)
             output_images.append(image_np)
-            field_np = sim_g.squeeze().cpu().numpy()
-            phase_np = sim_phs.squeeze().cpu().numpy()
+            # Materialize the phase first, then derive the complex field from it.
+            # Keeping two independent NumPy views of temporary CUDA outputs can
+            # leave the saved field inconsistent with the saved phase after the
+            # allocator reuses the temporary host storage.
+            phase_np = sim_phs.squeeze().cpu().numpy().copy()
+            field_np = np.exp(1j * phase_np).astype(np.complex64)
             output_errors.append(np.uint8(np.clip(ang_to_unit(np.angle(field_np)), 0, 1) * 255))
             output_aberrations.append(np.uint8(_normalize_for_display(sim_phs.squeeze()) * 255))
             final_field, final_phase = field_np, phase_np
@@ -354,6 +365,7 @@ def main() -> None:
         "network_zernike_features": args.zernike_features,
         "static_phase": args.static_phase,
         "measurement_normalization_max": dataset.max_intensity,
+        "measurement_normalization": dataset.normalization,
         "loss_history": loss_history,
         "elapsed_seconds": elapsed,
         "peak_cuda_memory_bytes": (

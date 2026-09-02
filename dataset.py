@@ -54,6 +54,7 @@ class BatchDataset(torch.utils.data.Dataset):
         num: Optional[int] = None,
         max_intensity: float = 0,
         zero_freq: int = -1,
+        normalization: str = "shared-max",
     ):
         self.data_dir = Path(data_dir).expanduser().resolve()
         if not self.data_dir.is_dir():
@@ -61,6 +62,12 @@ class BatchDataset(torch.utils.data.Dataset):
         self.im_prefix = im_prefix
         self.slm_prefix = slm_prefix
         self.zero_freq = int(zero_freq)
+        self.normalization = str(normalization)
+        if self.normalization not in {"shared-max", "per-frame-minmax"}:
+            raise ValueError(
+                "normalization must be 'shared-max' or 'per-frame-minmax', "
+                f"got {self.normalization!r}."
+            )
         self.manifest = self._load_manifest()
         self.phase_sign = int(self.manifest.get("phase_sign", PAPER_PHASE_SIGN))
         if self.phase_sign not in (-1, 1):
@@ -217,7 +224,17 @@ class BatchDataset(torch.utils.data.Dataset):
 
         image_path = self._measurement_path(self.image_files[idx], position)
         image = self._validate_image(image_path, position).astype(np.float32)
-        y_train = torch.from_numpy(image / self.max_intensity)
+        if self.normalization == "per-frame-minmax":
+            frame_minimum = float(image.min())
+            frame_maximum = float(image.max())
+            if frame_maximum <= frame_minimum:
+                raise ValueError(
+                    f"Frame {position} has no intensity range for per-frame min-max normalization."
+                )
+            normalized = (image - frame_minimum) / (frame_maximum - frame_minimum)
+        else:
+            normalized = image / self.max_intensity
+        y_train = torch.from_numpy(np.asarray(normalized, dtype=np.float32))
         if float(y_train.min()) < -1e-6 or float(y_train.max()) > 1.0 + 1e-6:
             raise ValueError(f"Normalized frame {position} is outside [0,1].")
         return x_train.unsqueeze(0), y_train, int(idx)

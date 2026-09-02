@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from dataclasses import replace
@@ -101,8 +102,30 @@ def select_cuda_batch_size(settings, candidates=(8, 4, 2, 1)):
     raise RuntimeError(f"batch=8、4、2、1 均显存不足：{attempts}")
 
 
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--scene-name", default=SETTINGS.scene_name)
+    parser.add_argument("--system-sigma", type=float, default=SETTINGS.system_sigma)
+    return parser
+
+
+def build_settings(scene_name: str, system_sigma: float):
+    if not scene_name or Path(scene_name).name != scene_name:
+        raise ValueError("--scene-name 必须是单个非空目录名。")
+    if system_sigma < 0:
+        raise ValueError("--system-sigma 必须为非负数。")
+    return replace(
+        SETTINGS,
+        scene_name=scene_name,
+        data_dir=SETTINGS.project_root / "data" / scene_name,
+        system_sigma=system_sigma,
+    )
+
+
 def main() -> None:
-    settings, smoke_report = select_cuda_batch_size(SETTINGS)
+    args = build_parser().parse_args()
+    requested_settings = build_settings(args.scene_name, args.system_sigma)
+    settings, smoke_report = select_cuda_batch_size(requested_settings)
     print(json.dumps(smoke_report, indent=2, ensure_ascii=False), flush=True)
     prepare_ground_truth(settings)
     generate_slm_patterns(settings)

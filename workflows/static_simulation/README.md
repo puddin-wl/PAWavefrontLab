@@ -238,6 +238,14 @@ Noll 4–136，网络空间特征也使用 136 项。运行前会实际执行一
 反向和优化器步进；batch=8 显存不足时依次尝试 4、2、1。所有数据写入新的
 `test_static_radial15_both_50` 目录，不会覆盖原来的 `test_static_zernike_50`。
 
+需要改变固定系统像差强度时，必须同时指定新的实验名，避免覆盖已有结果：
+
+```bash
+python workflows/static_simulation/run_radial15_simulation.py \
+  --scene-name test_static_radial15_system_sigma_0p5_50 \
+  --system-sigma 0.5
+```
+
 一般实验也可以在 `SimulationSettings` 中分别配置：
 
 - `system_num_modes` 和 `system_disabled_noll_indices`；

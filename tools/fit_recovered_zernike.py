@@ -109,6 +109,8 @@ def run(args: argparse.Namespace) -> Path:
     wrapped_fitted = np.angle(np.exp(1j * fitted)).astype(np.float32)
     wrapped_residual = np.angle(np.exp(1j * residual)).astype(np.float32)
     statistics = _statistics(recovered, fitted)
+    coefficient_stem = f"zernike_coefficients_noll_1_{args.num_modes}"
+    model_size = int(recovered.shape[0])
 
     # Build the hardware candidate directly from the fitted coefficients. Noll
     # 1-3 are removed for the command because piston is irrelevant and tilt is
@@ -121,9 +123,9 @@ def run(args: argparse.Namespace) -> Path:
     ).astype(np.float32)
     hardware_phase_wrapped = np.mod(hardware_phase_signed, 2.0 * np.pi).astype(np.float32)
 
-    np.save(output_dir / "zernike_coefficients_noll_1_10.npy", coefficients)
-    np.save(output_dir / "zernike_fitted_phase_600.npy", fitted)
-    np.save(output_dir / "zernike_residual_phase_600.npy", residual)
+    np.save(output_dir / f"{coefficient_stem}.npy", coefficients)
+    np.save(output_dir / f"zernike_fitted_phase_{model_size}.npy", fitted)
+    np.save(output_dir / f"zernike_residual_phase_{model_size}.npy", residual)
     np.save(output_dir / "zernike_fitted_slm_candidate_1080.npy", hardware_phase_wrapped)
     sio.savemat(
         output_dir / "zernike_fit_result.mat",
@@ -143,7 +145,7 @@ def run(args: argparse.Namespace) -> Path:
         output_dir / "zernike_fitted_slm_candidate_1080.png", hardware_phase_wrapped
     )
 
-    with (output_dir / "zernike_coefficients_noll_1_10.csv").open(
+    with (output_dir / f"{coefficient_stem}.csv").open(
         "w", newline="", encoding="utf-8-sig"
     ) as stream:
         writer = csv.writer(stream)
@@ -175,8 +177,8 @@ def run(args: argparse.Namespace) -> Path:
             "status": "experimental candidate; does not replace the already validated full-phase correction",
         },
         "interpretation_note": (
-            "The 50 measurement modulations used Noll 1-10, but that does not force the "
-            "unknown system aberration recovered by the MLP to lie in the same 10-mode subspace."
+            "The known measurement modulations do not force the unknown system "
+            "aberration recovered by the MLP to lie in the same modal subspace."
         ),
     }
     (output_dir / "zernike_fit_report.json").write_text(
@@ -206,7 +208,7 @@ def run(args: argparse.Namespace) -> Path:
     coefficient_axis.grid(True, axis="y", alpha=0.25)
     coefficient_axis.bar_label(bars, fmt="%.2f", padding=2, fontsize=8)
     fig.suptitle(
-        f"10-mode fit: wrapped RMSE {statistics['wrapped_rmse_rad']:.3f} rad, "
+        f"{args.num_modes}-mode fit: wrapped RMSE {statistics['wrapped_rmse_rad']:.3f} rad, "
         f"R² {statistics['phase_variance_explained_r2']:.3f}",
         fontsize=15,
     )
@@ -222,13 +224,15 @@ def run(args: argparse.Namespace) -> Path:
     axis.set_xticks(indices)
     axis.set_xlabel("Noll index", fontsize=13)
     axis.set_ylabel("Coefficient (rad)", fontsize=13)
-    axis.set_title("Fitted Zernike coefficients (Noll 1–10)", fontsize=16)
+    axis.set_title(
+        f"Fitted Zernike coefficients (Noll 1–{args.num_modes})", fontsize=16
+    )
     axis.grid(True, axis="y", alpha=0.25)
     axis.bar_label(bars, fmt="%.2f", padding=3, fontsize=10)
     margin = max(0.5, float(np.max(np.abs(coefficients))) * 0.12)
     axis.set_ylim(float(coefficients.min()) - margin, float(coefficients.max()) + margin)
     fig.tight_layout()
-    fig.savefig(output_dir / "zernike_coefficients_noll_1_10.png", dpi=240)
+    fig.savefig(output_dir / f"{coefficient_stem}.png", dpi=240)
     plt.close(fig)
     return output_dir
 
