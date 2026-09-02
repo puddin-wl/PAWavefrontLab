@@ -3,13 +3,25 @@
 /outputs/
 /vis/
 
-# MATLAB/TIFF archives and large generated arrays
+# Raw acquisition files, archives, and large generated arrays
+*.bin
 *.mat
 *.tif
 *.tiff
 *.zip
+*.7z
 *.npy
 *.npz
+
+# Reproducible denoising outputs and local result archives
+/motor_crosstalk_denoise/runs/
+/motor_crosstalk_denoise/results_archive/*
+!/motor_crosstalk_denoise/results_archive/README.md
+/noise_cause_review/aline_analysis/*.png
+/noise_cause_review/pd_comparison/
+/noise_cause_review/time_gate_test/
+/noise_cause_review/results/*
+!/noise_cause_review/results/.gitkeep
 
 # Python caches and environments
 __pycache__/
