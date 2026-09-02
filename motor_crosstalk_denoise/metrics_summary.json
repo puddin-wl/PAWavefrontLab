@@ -1,0 +1,36 @@
+{
+  "scope": "motor crosstalk cause analysis and denoising only; no neural reconstruction metrics",
+  "pd_check": {
+    "pd_peak_cv_percent": 0.8422938175499439,
+    "with_without_pd_image_correlation": 0.9999123187155083,
+    "median_absolute_relative_change_percent": 0.5930304527282715
+  },
+  "noise_waveform": {
+    "representative_noise_count": 6,
+    "peak_sample_indices": [44, 61, 77, 502, 94, 296],
+    "interpretation": "similar waveform with varying delay"
+  },
+  "template_decorrelation_2026_08_21": {
+    "template_length_samples": 361,
+    "correlation_threshold_absolute": 0.7,
+    "minimum_fitted_peak_adc": 80.0,
+    "matched_aline_count": 10883,
+    "matched_aline_fraction": 0.030230555555555556,
+    "isolated_candidate_count": 1094,
+    "isolated_removed_count": 1092,
+    "isolated_removed_fraction": 0.9981718464351006,
+    "noise_ncc_range": [0.8990910053253174, 0.9570568799972534],
+    "signal_abs_ncc_range": [0.08021559566259384, 0.2051856517791748],
+    "projection_median_before_after_adc": [50.0, 50.0],
+    "coherent_top_0_7_percent_matched_fraction": 0.011507936507936509,
+    "coherent_absolute_change_median_p95_adc": [0.0, 0.0]
+  },
+  "batch_validation_2026_08_20_D1_D50": {
+    "matched_fraction_mean": 0.030880666666666667,
+    "matched_fraction_min_max": [0.02992777777777778, 0.03161944444444444],
+    "matched_abs_ncc_median_mean": 0.8734982752799988,
+    "D1_projection_median_before_after_adc": [45.0, 45.0],
+    "D1_projection_p99_7_before_after_adc": [146.0, 85.0],
+    "origin_projection_p99_7_before_after_adc": [155.0, 102.0]
+  }
+}

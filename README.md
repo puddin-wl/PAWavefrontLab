@@ -20,6 +20,8 @@ for upstream attribution, the extension boundary, and redistribution constraints
 | 给一张清晰图片添加指定 Zernike 像差 | 编辑并运行 `run_single_image.py` | 像差相位图、PSF、模糊图 |
 | 完整运行“生成相位→模拟测量→网络恢复→评价” | 阅读 [`workflows/static_simulation/README.md`](workflows/static_simulation/README.md) | 50 张 SLM 相位、50 张测量图、恢复图像和恢复像差 |
 | 导入三维光声 TIFF 后运行 NeuWS | 步骤二后运行 `step3_import_photoacoustic_measurements.py` | 减 2048、置零、第 0 维投影后的 `SLM_rawN.mat` |
+| 去除 PA 图像中的电机串扰噪点 | 阅读 [`motor_crosstalk_denoise/README.md`](motor_crosstalk_denoise/README.md) | 去噪 MIP、NCC/匹配位置、前后对照图和指标 |
+| 查阅实验条件、结果与失败记录 | 阅读 [`log/README.md`](log/README.md) | 按日期整理的实验记录索引 |
 | 使用自己的 MATLAB/相机数据重建 | 查看下方“Static reconstruction”和“Data contract” | `final_I_est.mat`、`final_aberration.mat` |
 
 如果你的目标是第一次完整复现今天验证过的仿真，请不要从旧的
