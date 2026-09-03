@@ -29,6 +29,9 @@ from preprocessing.pa_denoising import (  # noqa: E402
     load_packed12_template_xcorr_mip_projection,
     load_template_csv,
 )
+from preprocessing.pa_denoising_gpu import (  # noqa: E402
+    load_packed12_template_xcorr_mip_projection_gpu,
+)
 
 
 # ------------------------- Direct-run settings -------------------------
@@ -46,6 +49,7 @@ BASELINE_ADC = 2048.0
 CORRELATION_THRESHOLD = 0.70
 MINIMUM_FITTED_PEAK_ADC = 80.0
 CHUNK_ROWS = 10
+BACKEND = "cuda"  # "cuda" or "cpu"
 TEMPLATE_CSV = (
     Path(__file__).resolve().parent
     / "template"
@@ -140,6 +144,7 @@ def _metrics(
     centers = result.center_map[matched]
     return {
         "method": "shifted template normalized-xcorr + least-squares subtraction",
+        "backend": args.backend,
         "source_pa": str(source),
         "source_modified": False,
         "shape_height_width_depth": [args.height, args.width, args.depth],
@@ -191,7 +196,12 @@ def denoise(args: argparse.Namespace) -> Path:
     source_state = (source.stat().st_size, source.stat().st_mtime_ns)
     try:
         template = load_template_csv(template_path)
-        result = load_packed12_template_xcorr_mip_projection(
+        loader = (
+            load_packed12_template_xcorr_mip_projection_gpu
+            if args.backend == "cuda"
+            else load_packed12_template_xcorr_mip_projection
+        )
+        result = loader(
             source,
             template=template,
             height=args.height,
@@ -262,6 +272,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--minimum-fitted-peak-adc", type=float, default=MINIMUM_FITTED_PEAK_ADC
     )
     parser.add_argument("--chunk-rows", type=int, default=CHUNK_ROWS)
+    parser.add_argument(
+        "--backend",
+        choices=("cpu", "cuda"),
+        default=BACKEND,
+    )
     return parser
 
 

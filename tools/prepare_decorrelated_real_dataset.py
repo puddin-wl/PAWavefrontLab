@@ -35,6 +35,10 @@ from preprocessing.pa_denoising import (  # noqa: E402
     load_packed12_template_xcorr_mip_projection,
     load_template_csv,
 )
+from preprocessing.pa_denoising_gpu import (  # noqa: E402
+    cuda_backend_info,
+    load_packed12_template_xcorr_mip_projection_gpu,
+)
 
 
 def _normalize(image: np.ndarray) -> np.ndarray:
@@ -189,7 +193,12 @@ def _project(
     template: np.ndarray,
     args: argparse.Namespace,
 ) -> TemplateXcorrProjectionResult:
-    return load_packed12_template_xcorr_mip_projection(
+    loader = (
+        load_packed12_template_xcorr_mip_projection_gpu
+        if getattr(args, "backend", "cpu") == "cuda"
+        else load_packed12_template_xcorr_mip_projection
+    )
+    return loader(
         source,
         template=template,
         height=int(getattr(args, "height", 600)),
@@ -213,6 +222,11 @@ def _prepare_into(work_dir: Path, args: argparse.Namespace) -> None:
     template = load_template_csv(template_path)
     if template.size != 361:
         raise ValueError(f"冻结模板必须为 361 点，实际为 {template.size}。")
+    backend_info = (
+        cuda_backend_info()
+        if getattr(args, "backend", "cpu") == "cuda"
+        else {"backend": "cpu", "cupy_version": None, "gpu_name": None}
+    )
 
     template_manifest = json.loads(
         (template_dir / "manifest.json").read_text(encoding="utf-8")
@@ -367,6 +381,7 @@ def _prepare_into(work_dir: Path, args: argparse.Namespace) -> None:
     )
     quality_report = {
         "method": "shifted template normalized-xcorr + least-squares subtraction",
+        "preprocessing_backend": backend_info,
         "origin": origin_summary,
         "frames": frame_summaries,
         "aggregate": {
@@ -407,6 +422,7 @@ def _prepare_into(work_dir: Path, args: argparse.Namespace) -> None:
             "photoacoustic_preprocessing": {
                 "input_encoding": "packed unsigned 12-bit little-endian",
                 "source_shape": [height, width, depth],
+                **backend_info,
                 "pd_correction": False,
                 "time_gate": None,
                 "matching_baseline": "per-A-line median",
@@ -486,6 +502,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--correlation-threshold", type=float, default=0.70)
     parser.add_argument("--minimum-fitted-peak-adc", type=float, default=80.0)
     parser.add_argument("--chunk-rows", type=int, default=10)
+    parser.add_argument(
+        "--backend",
+        choices=("cpu", "cuda"),
+        default="cuda",
+    )
     return parser
 
 

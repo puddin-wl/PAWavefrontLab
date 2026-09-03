@@ -1,0 +1,8 @@
+-r requirements.txt
+
+# CUDA 13 drivers can run CUDA 12 applications. CuPy 13 keeps this project's
+# NumPy <2 requirement, while the current cupy-cuda13x release requires NumPy 2.
+cupy-cuda12x==13.6.0
+nvidia-cuda-nvrtc-cu12>=12,<13
+nvidia-cublas-cu12>=12,<13
+nvidia-cufft-cu12>=11,<12
