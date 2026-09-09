@@ -1,0 +1,5 @@
+-r requirements.txt
+
+# Test-only dependency.  Scientific runtime versions remain constrained by
+# requirements.txt and are intentionally not upgraded during repository cleanup.
+pytest>=8,<10
