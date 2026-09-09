@@ -14,15 +14,19 @@ import tifffile
 from PIL import Image, TiffImagePlugin
 from tqdm import tqdm
 
+from preprocessing.packed12 import (
+    BITS_PER_SAMPLE,
+    decode_packed12,
+    packed12_byte_count,
+)
 
 DEFAULT_HEIGHT = 1000
 DEFAULT_WIDTH = 1000
 DEFAULT_DEPTH = 512
-BITS_PER_SAMPLE = 12
 
 
 def _expected_file_size(sample_count: int) -> int:
-    return (sample_count * BITS_PER_SAMPLE + 7) // 8
+    return packed12_byte_count(sample_count)
 
 
 def _validate_dimensions(height: int, width: int, depth: int) -> tuple[int, int, int]:
@@ -60,25 +64,17 @@ def _decode_into_volume(
                 packed = np.fromfile(stream, dtype=np.uint8, count=group_count * 3)
                 if packed.size != group_count * 3:
                     raise EOFError(f"读取 {source_path} 时意外到达文件末尾。")
-                packed = packed.reshape(-1, 3)
-
-                decoded = np.empty(group_count * 2, dtype=np.uint16)
-                decoded[0::2] = packed[:, 0].astype(np.uint16) | (
-                    (packed[:, 1] & 0x0F).astype(np.uint16) << 8
-                )
-                decoded[1::2] = (packed[:, 1] >> 4).astype(np.uint16) | (
-                    packed[:, 2].astype(np.uint16) << 4
-                )
+                decoded = decode_packed12(packed)
                 flat[write_start : write_start + decoded.size] = decoded
                 write_start += decoded.size
                 remaining_pairs -= group_count
                 progress.update(decoded.size)
 
             if has_last_sample:
-                tail = stream.read(2)
-                if len(tail) != 2:
+                tail = np.frombuffer(stream.read(2), dtype=np.uint8)
+                if tail.size != 2:
                     raise EOFError(f"读取 {source_path} 的最后一个 12 位值时数据不足。")
-                flat[write_start] = tail[0] | ((tail[1] & 0x0F) << 8)
+                flat[write_start] = decode_packed12(tail, sample_count=1)[0]
                 progress.update(1)
     finally:
         progress.close()
@@ -149,15 +145,7 @@ def _decode_rows_and_project(
                 packed = np.fromfile(stream, dtype=np.uint8, count=group_count * 3)
                 if packed.size != group_count * 3:
                     raise EOFError(f"读取 {source_path} 时意外到达文件末尾。")
-                packed = packed.reshape(-1, 3)
-
-                decoded = np.empty(group_count * 2, dtype=np.uint16)
-                decoded[0::2] = packed[:, 0].astype(np.uint16) | (
-                    (packed[:, 1] & 0x0F).astype(np.uint16) << 8
-                )
-                decoded[1::2] = (packed[:, 1] >> 4).astype(np.uint16) | (
-                    packed[:, 2].astype(np.uint16) << 4
-                )
+                decoded = decode_packed12(packed)
                 raw_max = decoded.reshape(row_count, width, depth).max(axis=2)
                 corrected = raw_max.astype(np.float32) - np.float32(baseline)
                 corrected = np.clip(np.rint(corrected), 0, np.iinfo(np.uint16).max)

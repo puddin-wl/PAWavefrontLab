@@ -14,11 +14,8 @@ import importlib.util
 from pathlib import Path
 import numpy as np
 
-from preprocessing.pa_denoising import (
-    BITS_PER_SAMPLE,
-    TemplateXcorrProjectionResult,
-    decode_packed12,
-)
+from preprocessing.pa_denoising import TemplateXcorrProjectionResult
+from preprocessing.packed12 import decode_packed12, packed12_byte_count
 
 
 _PRELOADED_CUDA_LIBRARIES: list[ctypes.CDLL] = []
@@ -317,7 +314,7 @@ def load_packed12_template_xcorr_mip_projection_gpu(
         raise FileNotFoundError(f"BIN 文件不存在：{path}")
 
     sample_count = height * width * depth
-    expected_bytes = (sample_count * BITS_PER_SAMPLE + 7) // 8
+    expected_bytes = packed12_byte_count(sample_count)
     if path.stat().st_size != expected_bytes:
         raise ValueError(
             f"文件大小与 {height}×{width}×{depth} 个 12 位值不匹配："

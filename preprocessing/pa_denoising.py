@@ -17,8 +17,11 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 from scipy.signal import fftconvolve
 
+from preprocessing.packed12 import (
+    decode_packed12,
+    packed12_byte_count,
+)
 
-BITS_PER_SAMPLE = 12
 
 
 @dataclass(frozen=True)
@@ -31,22 +34,6 @@ class TemplateXcorrProjectionResult:
     center_map: np.ndarray
     coefficient_map: np.ndarray
     matched_map: np.ndarray
-
-
-def decode_packed12(packed: np.ndarray) -> np.ndarray:
-    """Decode little-endian packed unsigned-12 samples in pairs."""
-    values = np.asarray(packed, dtype=np.uint8)
-    if values.ndim != 1 or values.size % 3:
-        raise ValueError("packed-12 输入必须是一维数组，且字节数是 3 的整数倍。")
-    triples = values.reshape(-1, 3)
-    decoded = np.empty(triples.shape[0] * 2, dtype=np.uint16)
-    decoded[0::2] = triples[:, 0].astype(np.uint16) | (
-        (triples[:, 1] & 0x0F).astype(np.uint16) << 8
-    )
-    decoded[1::2] = (triples[:, 1] >> 4).astype(np.uint16) | (
-        triples[:, 2].astype(np.uint16) << 4
-    )
-    return decoded
 
 
 def load_template_csv(path_value: str | Path) -> np.ndarray:
@@ -215,7 +202,7 @@ def load_packed12_template_xcorr_mip_projection(
     if not path.is_file():
         raise FileNotFoundError(f"BIN 文件不存在：{path}")
     sample_count = height * width * depth
-    expected_bytes = (sample_count * BITS_PER_SAMPLE + 7) // 8
+    expected_bytes = packed12_byte_count(sample_count)
     if path.stat().st_size != expected_bytes:
         raise ValueError(
             f"文件大小与 {height}×{width}×{depth} 个 12 位值不匹配："
@@ -385,7 +372,7 @@ def load_packed12_excess_rms_projection(
     if not path.is_file():
         raise FileNotFoundError(f"BIN 文件不存在：{path}")
     sample_count = height * width * depth
-    expected_bytes = (sample_count * BITS_PER_SAMPLE + 7) // 8
+    expected_bytes = packed12_byte_count(sample_count)
     actual_bytes = path.stat().st_size
     if actual_bytes != expected_bytes:
         raise ValueError(
@@ -405,14 +392,7 @@ def load_packed12_excess_rms_projection(
             packed = np.fromfile(stream, dtype=np.uint8, count=pair_count * 3)
             if packed.size != pair_count * 3:
                 raise EOFError(f"读取 {path} 时意外到达文件末尾。")
-            packed = packed.reshape(-1, 3)
-            decoded = np.empty(pair_count * 2, dtype=np.uint16)
-            decoded[0::2] = packed[:, 0].astype(np.uint16) | (
-                (packed[:, 1] & 0x0F).astype(np.uint16) << 8
-            )
-            decoded[1::2] = (packed[:, 1] >> 4).astype(np.uint16) | (
-                packed[:, 2].astype(np.uint16) << 4
-            )
+            decoded = decode_packed12(packed)
             volume = decoded.reshape(row_count, width, depth)
             projection[row_start:row_stop] = excess_rms_projection(
                 volume,
