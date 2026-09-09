@@ -296,7 +296,7 @@ NEUWS_RUN_LARGE_CUDA=1 python -m unittest \
 | `recon_exp_data.py` | 静态/动态重建训练入口 |
 | `tools/evaluate_neuws.py` | 图像与相位评估入口 |
 | `README.md` | 当前完整使用说明 |
-| `MIGRATION.md` | MATLAB 到 Python 的功能对应与迁移边界 |
+| `docs/migration.md` | MATLAB 到 Python 的功能对应与迁移边界 |
 
 ## 10. 后续继续工作时的建议顺序
 

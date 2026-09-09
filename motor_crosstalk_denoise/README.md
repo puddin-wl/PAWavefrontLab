@@ -12,7 +12,7 @@
 VS Code 中点击 **Run Python File**。也可以使用命令行：
 
 ```bash
-/home/xiangwan/miniconda3/envs/neuws/bin/python \
+python \
   motor_crosstalk_denoise/run_denoise.py \
   --input /path/to/600_600_512_PA1.bin \
   --output-dir motor_crosstalk_denoise/runs/my_result
@@ -37,7 +37,7 @@ VS Code 中点击 **Run Python File**。也可以使用命令行：
 正式算法实现在 `preprocessing/pa_denoising.py`，批量数据集入口为：
 
 ```bash
-/home/xiangwan/miniconda3/envs/neuws/bin/python \
+python \
   tools/prepare_decorrelated_real_dataset.py \
   --template-data-dir data/OLD_DATASET \
   --source-dir /path/to/D1-D50 \
@@ -65,7 +65,8 @@ origin 与 D1-D50 执行完全相同的去相关，然后生成 `measurements.np
 
 ## 结果和 PPT 材料
 
-- `ppt_assets/`：已经按汇报顺序编号的 9 张图；
+- `ppt_assets/`：已经按汇报顺序编号的 9 张 canonical figures；新增普通运行图
+  默认忽略，保留规则见其中的 `README.md`；
 - `PPT_NOTES.md`：建议的逐页标题、图和结论；
 - `metrics_summary.json`：可直接引用的关键数字；
 - `results_archive/`：按“噪点观察、PD 排查、固定窗、模板去相关、50 帧验证”

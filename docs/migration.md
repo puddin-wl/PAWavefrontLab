@@ -27,4 +27,4 @@ The old Windows project under `E:\mlp_code` was used only as a behavioral refere
 - Sixteen-bit SLM PNG export is a generic phase encoding, not a hardware calibration.
 - MATLAB and Octave are not runtime dependencies.
 
-The upstream baseline is retained in local Git as tag `upstream-baseline`; the migration is delivered as three subsequent local commits.
+The upstream baseline is retained in local Git as tag `upstream-baseline`; the migration is delivered as subsequent project commits.

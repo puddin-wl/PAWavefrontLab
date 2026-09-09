@@ -35,16 +35,16 @@
 
 ## 2. 项目位置和输入图片
 
-项目根目录：
+项目根目录（示例）：
 
 ```text
-/home/xiangwan/program/PAWavefrontLab
+/path/to/PAWavefrontLab
 ```
 
-当前示例输入图片：
+示例输入图片：
 
 ```text
-/home/xiangwan/program/PAWavefrontLab/data/test.tif
+/path/to/PAWavefrontLab/data/test.tif
 ```
 
 这是 Linux/WSL 路径。不要写成 `U:\home\...` 这样的 Windows 路径。
@@ -73,10 +73,11 @@
 
 ### 3.1 在 VS Code 选择解释器
 
-按 `Ctrl+Shift+P`，选择 **Python: Select Interpreter**，再选择：
+按 `Ctrl+Shift+P`，选择 **Python: Select Interpreter**，再选择本机环境中的
+Python，例如：
 
 ```text
-/home/xiangwan/miniconda3/envs/neuws/bin/python
+/path/to/conda/envs/neuws/bin/python
 ```
 
 ### 3.2 在终端激活现有环境（可选）
@@ -119,7 +120,7 @@ run_single_image.py
 主要修改：
 
 ```python
-INPUT_IMAGE = "/home/xiangwan/program/PAWavefrontLab/data/test.tif"
+INPUT_IMAGE = "data/example_input.tif"
 OUTPUT_DIR = "outputs/my_single_aberration"
 SIZE = 256
 
@@ -457,7 +458,7 @@ outputs/SCENE_NAME/evaluation/     # 指标、误差和最终图
 | `image_utils.py` | 图片读取、归一化和 16 位 PNG 保存 | 一般不修改 |
 | `preprocessing/photoacoustic.py` | 三维光声减 2048、负值置零和第 0 维投影 | 一般不修改 |
 | `aberration_config.py` | 解析显式 Zernike 系数 | 任务 A 的底层支持 |
-| `MIGRATION.md` | MATLAB 到 Python 的迁移边界 | 需要理解迁移时阅读 |
+| `docs/migration.md` | MATLAB 到 Python 的迁移边界 | 需要理解迁移时阅读 |
 
 ### `workflows/static_simulation/`
 

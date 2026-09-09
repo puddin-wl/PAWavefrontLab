@@ -1,4 +1,8 @@
-"""VS Code entry point: edit the settings below, then click Run Python File."""
+"""Deprecated VS Code wrapper for one-step synthetic dataset generation.
+
+New experiments should use workflows/static_simulation/step1 through step5.
+This wrapper remains available to reproduce the earlier generation-only flow.
+"""
 
 from pathlib import Path
 import subprocess
@@ -8,7 +12,8 @@ import sys
 # ======================== 只需要修改这里 ========================
 
 # 输入的静态物体图片
-INPUT_IMAGE = "/mnt/e/mlp_code/3.tif"
+# 示例占位路径；请改为本机输入图。真实实验路径不要提交到仓库。
+INPUT_IMAGE = "data/example_input.tif"
 
 # 数据集保存位置
 OUTPUT_DIR = "data/vscode_dataset"
@@ -73,6 +78,11 @@ def build_command() -> list[str]:
 
 
 def main() -> None:
+    print(
+        "提示：run_dataset.py 已 deprecated；完整新实验请使用 "
+        "workflows/static_simulation/step1 到 step5。",
+        flush=True,
+    )
     print(f"正在生成 {NUM_FRAMES} 帧 NeuWS 数据集……", flush=True)
     subprocess.run(build_command(), cwd=PROJECT_ROOT, check=True)
     print(f"完成。请查看：{PROJECT_ROOT / OUTPUT_DIR}")

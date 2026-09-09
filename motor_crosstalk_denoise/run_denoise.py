@@ -35,12 +35,10 @@ from preprocessing.pa_denoising_gpu import (  # noqa: E402
 
 
 # ------------------------- Direct-run settings -------------------------
-# Edit these two paths, then click "Run Python File" in VS Code.
-INPUT_BIN = Path(
-    "/mnt/c/neuws_data/raw/2026_0821/"
-    "LaserData_20260821-032156_2_600_600_512_PA1.bin"
-)
-OUTPUT_DIR = Path(__file__).resolve().parent / "runs" / "2026_08_21_example"
+# Edit these two paths, then click "Run Python File" in VS Code.  These are
+# repository-local placeholders; do not commit a private acquisition path.
+INPUT_BIN = PROJECT_ROOT / "data" / "example_capture_PA1.bin"
+OUTPUT_DIR = PROJECT_ROOT / "outputs" / "denoise_example"
 
 HEIGHT = 600
 WIDTH = 600

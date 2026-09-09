@@ -7,8 +7,8 @@ import sys
 
 # ======================== 只需要修改这里 ========================
 
-# WSL 中 Windows E:\mlp_code\3.tif 对应 /mnt/e/mlp_code/3.tif
-INPUT_IMAGE = "/mnt/e/mlp_code/3.tif"
+# 示例占位路径；请改为本机输入图。真实实验路径不要提交到仓库。
+INPUT_IMAGE = "data/example_input.tif"
 
 # 结果保存位置
 OUTPUT_DIR = "outputs/single_aberration"
