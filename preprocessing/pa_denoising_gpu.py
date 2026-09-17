@@ -271,6 +271,89 @@ def clean_traces_gpu(
     return tuple(cp.asnumpy(value) for value in outputs)
 
 
+def clean_traces_gpu_adaptive(
+    raw: np.ndarray,
+    template: np.ndarray,
+    *,
+    correlation_threshold: float,
+    minimum_fitted_peak_adc: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """GPU template subtraction with one amplitude threshold per A-line.
+
+    This is the adaptive pipeline counterpart of :func:`clean_traces_gpu`.
+    It intentionally returns only the cleaned traces and accepted-match mask,
+    which avoids copying unused diagnostic maps back from the GPU.
+    """
+    values = np.asarray(raw)
+    kernel_np = np.asarray(template, dtype=np.float32)
+    thresholds = np.asarray(minimum_fitted_peak_adc, dtype=np.float32)
+    if values.ndim != 2 or not np.issubdtype(values.dtype, np.number):
+        raise ValueError("raw 必须是二维数值 A-line 数组。")
+    if not np.isfinite(values).all():
+        raise ValueError("raw 必须是有限的二维 A-line 数组。")
+    if (
+        kernel_np.ndim != 1
+        or kernel_np.size < 3
+        or kernel_np.size % 2 != 1
+        or not np.isfinite(kernel_np).all()
+    ):
+        raise ValueError("template 必须是有限的一维奇数长度数组。")
+    if not np.isfinite(correlation_threshold) or not 0 < correlation_threshold <= 1:
+        raise ValueError("correlation_threshold 必须位于 (0, 1]。")
+    if thresholds.shape != (values.shape[0],):
+        raise ValueError(
+            f"minimum_fitted_peak_adc 必须为每条 A-line 提供一个阈值，"
+            f"应为 {(values.shape[0],)}，实际为 {thresholds.shape}。"
+        )
+    if not np.isfinite(thresholds).all() or float(np.min(thresholds)) < 0:
+        raise ValueError("minimum_fitted_peak_adc 必须是非负有限数组。")
+
+    cp, fftconvolve = _require_cupy()
+    depth = int(values.shape[1])
+    values_gpu = cp.asarray(values, dtype=cp.float32)
+    kernel_gpu = cp.asarray(kernel_np)
+    template_energy_gpu = cp.asarray(_template_energy_cpu(kernel_np, depth))
+
+    # Adaptive callers already provide robustly detrended residuals.  Keeping
+    # those values unchanged here preserves CPU/CUDA coefficient parity.
+    centered = values_gpu
+    correlation, dot = _correlation_terms_gpu(
+        centered, kernel_gpu, template_energy_gpu, cp, fftconvolve
+    )
+    half_width = int(kernel_np.size // 2)
+    if half_width:
+        correlation[:, :half_width] = cp.float32(0.0)
+        correlation[:, depth - half_width :] = cp.float32(0.0)
+    coefficient_by_center = dot / cp.maximum(
+        template_energy_gpu[None, :], cp.float32(1e-12)
+    )
+    fitted_peak = cp.abs(coefficient_by_center) * cp.max(cp.abs(kernel_gpu))
+    thresholds_gpu = cp.asarray(thresholds)[:, None]
+    accepted = (
+        cp.abs(correlation) >= cp.float32(correlation_threshold)
+    ) & (fitted_peak >= thresholds_gpu)
+    matched = cp.any(accepted, axis=1)
+    score = cp.where(accepted, cp.abs(correlation), cp.float32(-1.0))
+    centers = cp.argmax(score, axis=1).astype(cp.int32)
+
+    cleaned = values_gpu.copy()
+    rows = cp.flatnonzero(matched)
+    if int(rows.size):
+        chosen_centers = centers[rows]
+        template_indices = (
+            cp.arange(depth, dtype=cp.int32)[None, :]
+            - chosen_centers[:, None]
+            + half_width
+        )
+        valid = (template_indices >= 0) & (template_indices < kernel_gpu.size)
+        clipped = cp.clip(template_indices, 0, kernel_gpu.size - 1)
+        shifted = cp.where(valid, kernel_gpu[clipped], cp.float32(0.0))
+        coefficients = coefficient_by_center[rows, chosen_centers]
+        cleaned[rows] -= coefficients[:, None] * shifted
+
+    return cp.asnumpy(cleaned), cp.asnumpy(matched)
+
+
 def load_packed12_template_xcorr_mip_projection_gpu(
     source: str | Path,
     *,

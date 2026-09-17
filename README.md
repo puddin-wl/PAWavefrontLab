@@ -12,7 +12,7 @@ PAWavefrontLab 是围绕 NeuWS 构建的光声波前研究仓库，覆盖光学�
 | 目标 | 正式入口 |
 | --- | --- |
 | 完整静态仿真 | 按顺序运行 `workflows/static_simulation/step1_prepare_ground_truth.py` 到 `step5_evaluate.py` |
-| 真实 PA 主流程 | 从 `tools/generate_dual_grid_slm.py` 开始，随后按 [PROJECT_ENTRYPOINTS.md](PROJECT_ENTRYPOINTS.md) 操作 |
+| 真实 PA 主流程 | 从 `tools/generate_dual_grid_slm.py` 开始，采集后使用 `tools/prepare_adaptive_real_dataset.py`，随后按 [PROJECT_ENTRYPOINTS.md](PROJECT_ENTRYPOINTS.md) 操作 |
 | 单张图添加指定 Zernike 像差 | 编辑并运行 `run_single_image.py`（VS Code 演示 wrapper） |
 | 单个 BIN 测试电机串扰去噪 | `motor_crosstalk_denoise/run_denoise.py` |
 | 查看历史实验、失败记录和构想 | [docs/experiments/README.md](docs/experiments/README.md) |

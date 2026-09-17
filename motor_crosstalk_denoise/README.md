@@ -32,9 +32,26 @@ python \
 
 输出目录必须为空，程序不会覆盖已有结果，也不会修改原始 BIN。
 
-### 2. 集成到 NeuWS 图像处理流程
+### 2. 新实验的自适应 NeuWS 批处理（推荐）
 
-正式算法实现在 `preprocessing/pa_denoising.py`，批量数据集入口为：
+新实验不应直接复用这里的跨日期固定模板。使用：
+
+```bash
+python tools/prepare_adaptive_real_dataset.py \
+  --template-data-dir data/OLD_DATASET \
+  --source-dir /path/to/S1-S50 \
+  --origin-source /path/to/origin_PA1.bin \
+  --output-dir data/NEW_ADAPTIVE_DATASET \
+  --scene-name NEW_ADAPTIVE_DATASET
+```
+
+该入口会从本次实验的测量 A-line 自动确定信号窗、左右噪声窗、重复瞬态模板和
+匹配阈值，再将同一份冻结标定应用到 origin 与全部测量帧。正式投影使用噪声功率
+校正的 excess-RMS，不做空间平滑；自动质控失败时不会发布半成品训练数据集。
+
+### 3. 固定模板流程（历史复现）
+
+固定模板算法实现在 `preprocessing/pa_denoising.py`，批量数据集入口为：
 
 ```bash
 python \

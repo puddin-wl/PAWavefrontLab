@@ -9,7 +9,13 @@ from preprocessing.pa_denoising import (
 )
 from preprocessing.pa_denoising_gpu import (
     clean_traces_gpu,
+    clean_traces_gpu_adaptive,
     load_packed12_template_xcorr_mip_projection_gpu,
+)
+from preprocessing.pa_adaptive_denoising import (
+    AdaptiveCalibration,
+    AdaptiveTemplate,
+    clean_adaptive_traces,
 )
 
 
@@ -153,3 +159,37 @@ def test_gpu_packed12_projection_matches_cpu(tmp_path) -> None:
     np.testing.assert_array_equal(gpu.center_map, cpu.center_map)
     np.testing.assert_allclose(gpu.coefficient_map, cpu.coefficient_map, atol=2e-3)
     np.testing.assert_array_equal(gpu.matched_map, cpu.matched_map)
+
+
+def test_adaptive_gpu_matches_cpu_with_per_aline_thresholds() -> None:
+    rng = np.random.default_rng(9876)
+    template = np.asarray(
+        [0.0, 0.2, -0.6, 1.0, -0.6, 0.2, 0.0], dtype=np.float32
+    )
+    raw = rng.normal(0.0, 2.0, size=(32, 64)).astype(np.float32)
+    raw[3] += 20.0 * _shifted_template(template, depth=64, center=24)
+    raw[19] -= 22.0 * _shifted_template(template, depth=64, center=37)
+    thresholds = np.linspace(8.0, 14.0, raw.shape[0], dtype=np.float32)
+
+    cpu_calibration = AdaptiveCalibration(
+        height=1,
+        width=32,
+        depth=64,
+        signal_window=(20, 44),
+        noise_windows=((0, 16), (48, 64)),
+        templates=(AdaptiveTemplate(values=template, correlation_threshold=0.90),),
+    )
+    cpu, _, _, _ = clean_adaptive_traces(raw, cpu_calibration, backend="cpu")
+    # The public GPU primitive is also checked directly because the adaptive
+    # pipeline derives its thresholds from each trace's robust noise scale.
+    gpu_direct, matched = clean_traces_gpu_adaptive(
+        raw,
+        template,
+        correlation_threshold=0.90,
+        minimum_fitted_peak_adc=thresholds,
+    )
+
+    assert matched.shape == (raw.shape[0],)
+    assert np.isfinite(gpu_direct).all()
+    gpu, _, _, _ = clean_adaptive_traces(raw, cpu_calibration, backend="cuda")
+    np.testing.assert_allclose(gpu, cpu, atol=5e-3, rtol=1e-5)

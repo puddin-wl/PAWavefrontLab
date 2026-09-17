@@ -19,7 +19,7 @@
 | --- | --- | --- | --- |
 | 1 | 生成真实实验双网格 SLM | `tools/generate_dual_grid_slm.py` | `SLM_simN.mat` 与硬件相位图 |
 | 2 | 采集 PA 数据 | 实验设备 | 只读原始 PA BIN |
-| 3 | 去串扰并构建 NeuWS 数据集 | `tools/prepare_decorrelated_real_dataset.py` | MIP、`SLM_rawN.mat`、manifest、质量报告 |
+| 3 | 实验级自适应 A-line 去噪并建集 | `tools/prepare_adaptive_real_dataset.py` | excess-RMS 投影、自动标定、`SLM_rawN.mat`、质量报告 |
 | 4 | NeuWS 重建 | `recon_exp_data.py` | `vis/<scene>/final/` |
 | 5 | 有 ORIGIN 的重建评价 | `tools/evaluate_real_reconstruction.py` | 指标与对照图 |
 | 6 | 拟合恢复像差 | `tools/fit_recovered_zernike.py` | Zernike 系数与拟合报告 |
@@ -29,17 +29,18 @@
 没有 ORIGIN 时，第 5 步改用 `tools/finalize_samples_only_reconstruction.py`，不要
 强行计算 PSNR/SSIM。
 
-### 数据准备的三个入口不要混用
+### 数据准备入口不要混用
 
 | 场景 | 入口 |
 | --- | --- |
-| 正式整批去串扰 + 建集 | `tools/prepare_decorrelated_real_dataset.py` |
+| 新实验：自动信号窗、噪声窗和实验级模板 + 建集 | `tools/prepare_adaptive_real_dataset.py`（推荐） |
+| 复现旧的固定模板去相关 + 全深度 MIP | `tools/prepare_decorrelated_real_dataset.py` |
 | 不去串扰的普通 packed-12 BIN + 建集 | `tools/prepare_real_point_scan_dataset.py` |
 | 旧的 excess-RMS 方法复现 | `tools/prepare_denoised_real_dataset.py`（兼容/研究入口） |
 
-正式批处理支持 `--backend cuda|cpu`。CUDA 后端调用
-`preprocessing/pa_denoising_gpu.py`，CPU 参考实现位于
-`preprocessing/pa_denoising.py`；两者输出必须保持一致。
+自适应批处理默认 `--backend auto`，会自动选择 CUDA 或 CPU。它按实验生成并冻结
+一份 `calibration.json`，不需要人工输入深度窗口、模板或匹配阈值，不做空间平滑；
+自动质控失败时只保留失败报告，不发布训练数据集。
 
 ## 静态仿真 workflow
 
@@ -114,6 +115,14 @@ python motor_crosstalk_denoise/run_denoise.py \
   --output-dir outputs/denoise_example \
   --height 600 --width 600 --depth 512 \
   --backend cpu
+
+# 新实验整批自适应 A-line 去噪与建集
+python tools/prepare_adaptive_real_dataset.py \
+  --source-dir /path/to/raw_experiment \
+  --origin-source /path/to/origin_PA1.bin \
+  --template-data-dir data/EXISTING_DATASET \
+  --output-dir data/NEW_ADAPTIVE_DATASET \
+  --scene-name NEW_ADAPTIVE_DATASET
 
 # 全部测试；CUDA 不可用时 GPU 测试自动跳过
 python -m pytest -q
