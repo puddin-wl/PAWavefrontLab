@@ -6,10 +6,14 @@ from pathlib import Path
 
 import numpy as np
 import scipy.io as sio
+from PIL import Image
 
 from optics import zernike_basis_numpy
 from tools.generate_dual_grid_slm import (
+    _expand_radial_order_values,
+    _resolve_coefficients,
     _sample_coefficients,
+    _sample_coefficients_per_mode,
     _synthesize_phases_low_memory,
     generate,
 )
@@ -35,6 +39,34 @@ class DualGridSlmTests(unittest.TestCase):
         self.assertTrue(np.all(first[:, :4] == 0))
         self.assertTrue(np.any(first[:, 4:] != 0))
         self.assertLessEqual(float(np.abs(first).max()), 0.5)
+
+    def test_radial_order_dependent_sampling_obeys_each_band(self):
+        sigmas = _expand_radial_order_values(
+            [0.25, 0.25, 0.25, 0.25, 0.18, 0.12, 0.08], 28, "sigmas"
+        )
+        limits = _expand_radial_order_values(
+            [0.5, 0.5, 0.5, 0.5, 0.36, 0.24, 0.16], 28, "limits"
+        )
+        first = _sample_coefficients_per_mode(
+            50, sigmas, 20260917, (1, 2, 3), mode_limits=limits
+        )
+        second = _sample_coefficients_per_mode(
+            50, sigmas, 20260917, (1, 2, 3), mode_limits=limits
+        )
+        self.assertTrue(np.array_equal(first, second))
+        self.assertTrue(np.all(first[:, :3] == 0))
+        self.assertTrue(np.any(first[:, 3] != 0))
+        self.assertTrue(np.all(np.abs(first) <= limits[None, :] + 1e-7))
+        self.assertLessEqual(float(np.abs(first[:, 21:28]).max()), 0.16)
+
+    def test_radial_order_limit_requires_radial_order_sigma(self):
+        args = argparse.Namespace(
+            base_coefficients=None,
+            sigma_by_radial_order=None,
+            coefficient_limit_by_radial_order=[0.5, 0.5, 0.5],
+        )
+        with self.assertRaisesRegex(ValueError, "sigma-by-radial-order"):
+            _resolve_coefficients(args, ())
 
     def test_low_memory_synthesis_matches_full_basis(self):
         coefficients = _sample_coefficients(2, 136, 1.22, 7, (2, 3))
@@ -64,9 +96,19 @@ class DualGridSlmTests(unittest.TestCase):
             generate(args)
             model = sio.loadmat(output / "model_16/mat/SLM_sim1.mat")["proj_sim"]
             hardware = sio.loadmat(output / "hardware_32/mat/SLM_hw1.mat")["phase_hw"]
+            model_png = np.asarray(
+                Image.open(output / "model_16/png_uint16_wrapped/SLM_sim1.png")
+            )
+            hardware_png = np.asarray(
+                Image.open(output / "hardware_32/png_uint8_wrapped/SLM_hw1.png")
+            )
             manifest = json.loads((output / "manifest.json").read_text())
             self.assertEqual(model.shape, (16, 16))
             self.assertEqual(hardware.shape, (32, 32))
+            self.assertEqual(model_png.dtype, np.uint16)
+            self.assertEqual(hardware_png.dtype, np.uint8)
+            self.assertGreaterEqual(int(hardware_png.min()), 0)
+            self.assertLessEqual(int(hardware_png.max()), 255)
             self.assertTrue(np.isfinite(model).all())
             self.assertTrue(np.isfinite(hardware).all())
             self.assertEqual(manifest["noll_indices"][-1], 136)
@@ -74,6 +116,15 @@ class DualGridSlmTests(unittest.TestCase):
             self.assertTrue(manifest["same_coefficients_on_both_grids"])
             self.assertTrue(manifest["defocus_included"])
             self.assertTrue(manifest["piston_included"])
+            self.assertEqual(
+                manifest["png_phase_encoding"]["hardware_integer_range"], [0, 255]
+            )
+            self.assertEqual(
+                manifest["png_phase_encoding"]["model_integer_range"], [0, 65535]
+            )
+            self.assertFalse(
+                manifest["png_phase_encoding"]["hardware_lut_applied"]
+            )
 
     def test_generate_scales_saved_coefficients_and_extends_modes(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -1,0 +1,42 @@
+{
+  "scene_name": "YYYY-MM-DD_reference_guided",
+  "source_dir": "/home/USER/data/PAWavefrontLab/raw/YYYY-MM-DD",
+  "origin_source": "/home/USER/data/PAWavefrontLab/raw/YYYY-MM-DD/origin_YYYYMMDD-HHMMSS_1_600_600_512_PA1.bin",
+  "phase_dir": "/home/USER/program/PAWavefrontLab/data/slm50_noll4_28_decay4x_600_1080/model_600/mat",
+  "dataset_output_dir": "/home/USER/data/PAWavefrontLab/processed/YYYY-MM-DD_reference_guided",
+  "preprocess": {
+    "backend": "cuda",
+    "chunk_rows": 600,
+    "grid_size": 20,
+    "seed": 0,
+    "teacher_correlation_threshold": 0.7,
+    "teacher_refit_threshold": 0.8,
+    "final_correlation_threshold": 0.7,
+    "minimum_fitted_peak_adc": 80.0
+  },
+  "training": {
+    "root_dir": ".",
+    "num_epochs": 1000,
+    "batch_size": 16,
+    "phs_layers": 4,
+    "zernike_features": 28,
+    "static_phase": true,
+    "device": "cuda",
+    "normalization": "shared-max",
+    "vis_freq": 1000,
+    "log_freq": 10,
+    "early_stop_warmup": 100,
+    "early_stop_window": 20,
+    "early_stop_patience": 60,
+    "early_stop_min_delta": 5e-6,
+    "seed": 0
+  },
+  "slm_export": {
+    "hardware_size": 1080
+  },
+  "zernike": {
+    "enabled": true,
+    "num_modes": 28,
+    "hardware_size": 1080
+  }
+}

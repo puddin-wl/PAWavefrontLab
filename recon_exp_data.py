@@ -206,6 +206,7 @@ def main() -> None:
     total_iteration = 0
     loss_history = []
     best_smoothed_loss = float("inf")
+    patience_reference_loss = float("inf")
     best_epoch = 0
     epochs_without_improvement = 0
     best_image_state = None
@@ -252,43 +253,81 @@ def main() -> None:
         loss_history.append(float(np.mean(epoch_losses)))
         image_scheduler.step()
         phase_scheduler.step()
-        if args.log_freq > 0 and (
-            (epoch + 1) % args.log_freq == 0 or epoch + 1 == args.num_epochs
-        ):
-            elapsed_so_far = time.time() - start_time
-            print(
-                f"Epoch {epoch + 1}/{args.num_epochs}: "
-                f"mean MSE={loss_history[-1]:.6e}, elapsed={elapsed_so_far:.1f}s",
-                flush=True,
-            )
-        if (
+        smoothed_loss = None
+        improvement = None
+        smoothed_loss_available = (
             args.early_stop_patience > 0
-            and epoch + 1 >= args.early_stop_warmup
             and len(loss_history) >= args.early_stop_window
-        ):
+        )
+        early_stopping_active = (
+            smoothed_loss_available and epoch + 1 >= args.early_stop_warmup
+        )
+        if smoothed_loss_available:
             smoothed_loss = float(np.mean(loss_history[-args.early_stop_window :]))
-            if smoothed_loss < best_smoothed_loss - args.early_stop_min_delta:
+            if smoothed_loss < best_smoothed_loss:
                 best_smoothed_loss = smoothed_loss
                 best_epoch = epoch + 1
-                epochs_without_improvement = 0
                 best_image_state = copy.deepcopy(network.g_im.state_dict())
                 best_phase_state = copy.deepcopy(network.g_g.state_dict())
+
+        if early_stopping_active:
+            if not np.isfinite(patience_reference_loss):
+                patience_reference_loss = smoothed_loss
+                epochs_without_improvement = 0
             else:
-                epochs_without_improvement += 1
+                improvement = patience_reference_loss - smoothed_loss
+                if improvement > 0.0 and improvement >= args.early_stop_min_delta:
+                    patience_reference_loss = smoothed_loss
+                    epochs_without_improvement = 0
+                else:
+                    epochs_without_improvement += 1
             if epochs_without_improvement >= args.early_stop_patience:
                 stopped_early = True
-                print(
-                    f"Early stopping at epoch {epoch + 1}: smoothed MSE has not "
-                    f"improved by {args.early_stop_min_delta:.3e} for "
-                    f"{args.early_stop_patience} epochs. Best epoch: {best_epoch}, "
-                    f"best smoothed MSE: {best_smoothed_loss:.6e}.",
-                    flush=True,
+        should_log_epoch = args.log_freq > 0 and (
+            (epoch + 1) % args.log_freq == 0 or epoch + 1 == args.num_epochs
+        )
+        if should_log_epoch or stopped_early:
+            elapsed_so_far = time.time() - start_time
+            early_stop_status = ""
+            if smoothed_loss_available:
+                early_stop_status = (
+                    f", smoothed={smoothed_loss:.6e}, best={best_smoothed_loss:.6e}"
                 )
-                break
+                if early_stopping_active:
+                    improvement_text = (
+                        "initialized" if improvement is None else f"{improvement:.6e}"
+                    )
+                    early_stop_status += (
+                        f", improvement={improvement_text}, "
+                        f"min_delta={args.early_stop_min_delta:.3e}, "
+                        f"no_improve={epochs_without_improvement}/"
+                        f"{args.early_stop_patience}"
+                    )
+                else:
+                    early_stop_status += ", patience=warmup"
+            print(
+                f"Epoch {epoch + 1}/{args.num_epochs}: "
+                f"mean MSE={loss_history[-1]:.6e}{early_stop_status}, "
+                f"elapsed={elapsed_so_far:.1f}s",
+                flush=True,
+            )
+        if stopped_early:
+            print(
+                f"Early stopping at epoch {epoch + 1}: smoothed MSE has not "
+                f"improved by {args.early_stop_min_delta:.3e} for "
+                f"{args.early_stop_patience} epochs. Best epoch: {best_epoch}, "
+                f"best smoothed MSE: {best_smoothed_loss:.6e}.",
+                flush=True,
+            )
+            break
     elapsed = time.time() - start_time
     print(f"Training took {elapsed:.2f} seconds.")
 
-    if stopped_early and best_image_state is not None and best_phase_state is not None:
+    if (
+        args.early_stop_patience > 0
+        and best_image_state is not None
+        and best_phase_state is not None
+    ):
         network.g_im.load_state_dict(best_image_state)
         network.g_g.load_state_dict(best_phase_state)
         print(f"Restored the best smoothed-loss state from epoch {best_epoch}.")
@@ -383,6 +422,11 @@ def main() -> None:
             "window": args.early_stop_window,
             "best_epoch": best_epoch if best_epoch else None,
             "best_smoothed_loss": best_smoothed_loss if np.isfinite(best_smoothed_loss) else None,
+            "patience_reference_loss": (
+                patience_reference_loss
+                if np.isfinite(patience_reference_loss)
+                else None
+            ),
         },
     }
     (final_dir / "training_summary.json").write_text(

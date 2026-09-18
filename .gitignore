@@ -23,10 +23,22 @@
 /noise_cause_review/results/*
 !/noise_cause_review/results/.gitkeep
 
-# Existing tracked PPT figures are the reviewed canonical set.  New generated
+# Existing tracked PPT figures are the reviewed canonical set. New generated
 # figures stay local unless explicitly reviewed and force-added.
 /motor_crosstalk_denoise/ppt_assets/*
 !/motor_crosstalk_denoise/ppt_assets/README.md
+
+# Machine-local real-experiment configuration
+/configs/real_experiment.json
+
+# Local run logs and temporary review patches (formal log/*.md notes stay tracked)
+/log/*.log
+/*.patch
+
+# Local CUDA profiler outputs
+*.nsys-rep
+*.sqlite
+reference_guided_600.log
 
 # Python caches and environments
 __pycache__/

@@ -3,44 +3,63 @@
 本文件只回答：**为了完成某个任务，应运行哪个程序。** 系统设计见
 [`docs/architecture.md`](docs/architecture.md)，实验记录见
 [`docs/experiments/README.md`](docs/experiments/README.md)。所有命令均从项目根目录
-运行，路径示例使用 `/path/to/...`，请替换为本机路径。
+运行。
 
 ## 入口身份
 
-- **正式 workflow**：完成一条端到端科研流程，位于 `workflows/`，或由下面列出的
-  多个正式工具组成。
+- **正式 workflow**：完成一条端到端科研流程，位于 `workflows/`。
 - **正式 command/tool**：完成一个明确步骤，通常位于 `tools/`。
 - **direct-run wrapper**：便于 VS Code 点击运行，内部调用正式工具；不是另一套算法。
 - **deprecated/历史入口**：仅为复现旧用法保留，不建议新实验采用。
 
-## 真实实验主流程
+## 真实实验推荐入口
+
+当前真实实验的第一推荐入口是：
+
+```bash
+python workflows/real_experiment/run_pipeline.py
+```
+
+第一次使用先复制并编辑本机配置：
+
+```bash
+cp configs/examples/real_experiment_pipeline.json configs/real_experiment.json
+python workflows/real_experiment/run_pipeline.py --dry-run
+```
+
+中断恢复使用：
+
+```bash
+python workflows/real_experiment/run_pipeline.py --resume
+```
+
+总控程序只负责调度，内部步骤仍是独立程序：
 
 | 顺序 | 任务 | 正式入口 | 主要输出 |
 | --- | --- | --- | --- |
-| 1 | 生成真实实验双网格 SLM | `tools/generate_dual_grid_slm.py` | `SLM_simN.mat` 与硬件相位图 |
-| 2 | 采集 PA 数据 | 实验设备 | 只读原始 PA BIN |
-| 3 | 实验级自适应 A-line 去噪并建集 | `tools/prepare_adaptive_real_dataset.py` | excess-RMS 投影、自动标定、`SLM_rawN.mat`、质量报告 |
-| 4 | NeuWS 重建 | `recon_exp_data.py` | `vis/<scene>/final/` |
-| 5 | 有 ORIGIN 的重建评价 | `tools/evaluate_real_reconstruction.py` | 指标与对照图 |
-| 6 | 拟合恢复像差 | `tools/fit_recovered_zernike.py` | Zernike 系数与拟合报告 |
-| 7 | 导出 SLM 校正 | `tools/export_slm_correction.py` | 校正相位 |
-| 8 | 重新采集后的光学验证 | `tools/evaluate_optical_restoration.py` | 最终验证报告 |
+| 1 | reference-guided 自适应 A-line 去相关并建集 | `tools/prepare_reference_guided_real_dataset.py` | excess-RMS、自动标定/QC、`SLM_rawN.mat` |
+| 2 | NeuWS 网络训练与像差恢复 | `recon_exp_data.py` | `vis/<scene>/final/final_aberration.mat`、`training_summary.json` |
+| 3 | **立即导出硬件 SLM 校正** | `tools/export_slm_correction.py` | **`SLM_final_correction_1080.png`** / MAT / NPY |
+| 4 | Zernike 拟合与分析 | `tools/fit_recovered_zernike.py` | 系数、拟合相位、报告 |
+| 5 | 重新采集后的光学验证 | `tools/evaluate_optical_restoration.py` | 最终验证报告（独立后续步骤） |
 
-没有 ORIGIN 时，第 5 步改用 `tools/finalize_samples_only_reconstruction.py`，不要
-强行计算 PSNR/SSIM。
+第 3 步优先于 Zernike 分析：训练一结束就生成可加载的 SLM 相位，避免动物实验现场
+等待分析图和报告。`fit_recovered_zernike.py` 产生的 Zernike SLM candidate 仅用于
+分析，不替代 `export_slm_correction.py` 的 full-phase correction。
 
 ### 数据准备入口不要混用
 
 | 场景 | 入口 |
 | --- | --- |
-| 新实验：自动信号窗、噪声窗和实验级模板 + 建集 | `tools/prepare_adaptive_real_dataset.py`（推荐） |
+| **新实验：历史 teacher → 当前实验模板 + 自动信号/噪声窗 + excess-RMS + CUDA 建集** | **`tools/prepare_reference_guided_real_dataset.py`（当前推荐）** |
+| 早期实验级自适应流程复现 | `tools/prepare_adaptive_real_dataset.py` |
 | 复现旧的固定模板去相关 + 全深度 MIP | `tools/prepare_decorrelated_real_dataset.py` |
 | 不去串扰的普通 packed-12 BIN + 建集 | `tools/prepare_real_point_scan_dataset.py` |
 | 旧的 excess-RMS 方法复现 | `tools/prepare_denoised_real_dataset.py`（兼容/研究入口） |
 
-自适应批处理默认 `--backend auto`，会自动选择 CUDA 或 CPU。它按实验生成并冻结
-一份 `calibration.json`，不需要人工输入深度窗口、模板或匹配阈值，不做空间平滑；
-自动质控失败时只保留失败报告，不发布训练数据集。
+reference-guided 流程使用历史固定模板作为 teacher，在当前实验高可信事件上自动重标定
+实验模板；最终去相关继续使用已验证的 NCC 匹配、LS 系数拟合和非循环模板减法。
+生产验证配置为 CUDA、`chunk_rows=600`，整批实验复用 persistent GPU workspace。
 
 ## 静态仿真 workflow
 
@@ -65,23 +84,27 @@ workflow，会要求 CUDA；它不是通用默认入口。
 
 | 任务 | 入口 |
 | --- | --- |
+| reference-guided 整批 BIN 去相关并建集 | `tools/prepare_reference_guided_real_dataset.py` |
 | 单图添加指定像差 | `tools/apply_aberration.py` |
 | 生成仿真数据/SLM pattern | `tools/generate_neuws_data.py` |
 | 单纯 BIN → 多页 TIFF 或 MIP | `savetif/bin_to_tiff.py` |
 | 单 BIN 串扰去噪诊断 | `motor_crosstalk_denoise/run_denoise.py` |
+| NeuWS 网络训练/重建 | `recon_exp_data.py` |
+| full-phase SLM 校正导出 | `tools/export_slm_correction.py` |
+| Zernike 拟合 | `tools/fit_recovered_zernike.py` |
 | 通用图像/相位评价 | `tools/evaluate_neuws.py` |
 | PPT 代表性素材整理 | `tools/export_ppt_assets.py` |
 
 ## VS Code direct-run wrapper
 
-`run_single_image.py` 是受支持的演示 wrapper：修改顶部输入图、输出目录和 Zernike
-系数后点击运行。其真正实现是 `tools/apply_aberration.py`。
+配置好 `configs/real_experiment.json` 后，`workflows/real_experiment/run_pipeline.py` 无需
+额外参数即可运行，因此也可直接在 VS Code 中点击 Run Python File。
 
-`motor_crosstalk_denoise/run_denoise.py` 同时提供 CLI 和 direct-run 配置。仓库默认
-只放 placeholder 路径；本机真实数据路径不要提交。
+`run_single_image.py` 是受支持的单图演示 wrapper：修改顶部输入图、输出目录和
+Zernike 系数后点击运行。其真正实现是 `tools/apply_aberration.py`。
 
 `run_dataset.py` **已 deprecated**。它仍可复现旧的一步式随机数据生成，但不包含
-五步 static workflow 的分阶段保护、NeuWS 重建和评价。新实验使用上面的五步流程。
+reference-guided 预处理、NeuWS 训练、SLM 校正导出和阶段恢复。
 
 ## 不直接运行的模块
 
@@ -95,37 +118,39 @@ workflows/.../workflow.py   workflow 底层编排
 ```
 
 `noise_cause_review/` 保存噪声成因、PD、A-line、固定窗和模板 NCC 的研究溯源。
-处理新数据不要从其中的脚本开始；正式算法和入口分别位于 `preprocessing/` 与
-`motor_crosstalk_denoise/run_denoise.py`。
+处理新数据不要从其中的脚本开始。
 
-## 常用命令示例
+## 分阶段命令示例
+
+如果不使用总控入口，可手动分别运行：
 
 ```bash
-# 重建已整理的数据集
+python tools/prepare_reference_guided_real_dataset.py \
+  --source-dir /path/to/raw_experiment \
+  --origin-source /path/to/origin_PA1.bin \
+  --phase-dir /path/to/SLM_sim_mat \
+  --output-dir /path/to/processed_dataset \
+  --scene-name new_scene \
+  --backend cuda \
+  --chunk-rows 600
+
 python recon_exp_data.py \
   --static_phase \
-  --data_dir /path/to/neuws_dataset \
+  --data_dir /path/to/processed_dataset \
   --scene_name new_scene \
   --num_epochs 1000 \
   --phs_layers 4
 
-# 单个 BIN 去串扰（所有路径均为示例）
-python motor_crosstalk_denoise/run_denoise.py \
-  --input /path/to/capture_PA1.bin \
-  --output-dir outputs/denoise_example \
-  --height 600 --width 600 --depth 512 \
-  --backend cpu
+python tools/export_slm_correction.py \
+  --input-phase vis/new_scene/final/final_aberration.mat \
+  --output-dir vis/new_scene/slm_correction \
+  --hardware-size 1080
 
-# 新实验整批自适应 A-line 去噪与建集
-python tools/prepare_adaptive_real_dataset.py \
-  --source-dir /path/to/raw_experiment \
-  --origin-source /path/to/origin_PA1.bin \
-  --template-data-dir data/EXISTING_DATASET \
-  --output-dir data/NEW_ADAPTIVE_DATASET \
-  --scene-name NEW_ADAPTIVE_DATASET
-
-# 全部测试；CUDA 不可用时 GPU 测试自动跳过
-python -m pytest -q
+python tools/fit_recovered_zernike.py \
+  --input-phase vis/new_scene/final/final_aberration.mat \
+  --output-dir vis/new_scene/zernike_fit \
+  --num-modes 28 \
+  --hardware-size 1080
 ```
 
 真实主流程的数据形状、强度归一化、相位符号、Zernike 约定和去噪阈值属于实验

@@ -19,7 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from image_utils import write_wrapped_phase_png  # noqa: E402
+from image_utils import write_wrapped_phase_png_uint8  # noqa: E402
 from optics import zernike_basis_numpy  # noqa: E402
 
 
@@ -141,7 +141,7 @@ def run(args: argparse.Namespace) -> Path:
         },
         do_compression=True,
     )
-    write_wrapped_phase_png(
+    write_wrapped_phase_png_uint8(
         output_dir / "zernike_fitted_slm_candidate_1080.png", hardware_phase_wrapped
     )
 
@@ -241,7 +241,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-phase", required=True)
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--num-modes", type=int, default=10)
+    parser.add_argument("--num-modes", type=int, default=28)
     parser.add_argument("--hardware-size", type=int, default=1080)
     return parser
 

@@ -20,7 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from image_utils import write_wrapped_phase_png  # noqa: E402
+from image_utils import write_wrapped_phase_png_uint8  # noqa: E402
 from optics import zernike_basis_numpy  # noqa: E402
 
 
@@ -108,7 +108,7 @@ def export(args: argparse.Namespace) -> Path:
         },
         do_compression=True,
     )
-    write_wrapped_phase_png(
+    write_wrapped_phase_png_uint8(
         output_dir / "SLM_final_correction_1080.png", hardware_phase_wrapped
     )
 
@@ -168,8 +168,8 @@ def export(args: argparse.Namespace) -> Path:
         "phase_units": "radians",
         "phase_range": [0.0, 2.0 * math.pi],
         "png_encoding": {
-            "dtype": "uint16",
-            "mapping": "wrapped [0,2pi) linearly mapped to [0,65535]",
+            "dtype": "uint8",
+            "mapping": "wrapped [0,2pi) linearly mapped to [0,255]",
             "device_lut_applied": False,
             "note": "This matches the generic encoding used for SLM_hw1-SLM_hw50; apply a device LUT only if the acquisition patterns also used one.",
         },

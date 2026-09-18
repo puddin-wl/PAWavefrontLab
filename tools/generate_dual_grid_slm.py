@@ -24,7 +24,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from image_utils import write_wrapped_phase_png  # noqa: E402
+from image_utils import (
+    write_wrapped_phase_png,
+    write_wrapped_phase_png_uint8,
+)  # noqa: E402
 from optics import centered_crop, zernike_basis_numpy  # noqa: E402
 
 
@@ -68,32 +71,88 @@ def _sample_coefficients(
     disabled_noll_indices: tuple[int, ...],
     coefficient_limit: float | None = None,
 ) -> np.ndarray:
+    mode_sigmas = np.full(num_modes, float(sigma), dtype=np.float64)
+    mode_limits = (
+        None
+        if coefficient_limit is None
+        else np.full(num_modes, float(coefficient_limit), dtype=np.float64)
+    )
+    return _sample_coefficients_per_mode(
+        num_frames,
+        mode_sigmas,
+        seed,
+        disabled_noll_indices,
+        mode_limits=mode_limits,
+    )
+
+
+def _sample_coefficients_per_mode(
+    num_frames: int,
+    mode_sigmas: np.ndarray,
+    seed: int,
+    disabled_noll_indices: tuple[int, ...],
+    *,
+    mode_limits: np.ndarray | None = None,
+) -> np.ndarray:
+    """Sample independent truncated Gaussians with one scale per Noll mode."""
+    mode_sigmas = np.asarray(mode_sigmas, dtype=np.float64)
+    if mode_sigmas.ndim != 1 or mode_sigmas.size == 0:
+        raise ValueError("mode_sigmas 必须是一维非空数组。")
+    num_modes = int(mode_sigmas.size)
     if num_frames <= 0:
         raise ValueError("num_frames 必须为正整数。")
-    if not np.isfinite(sigma) or sigma < 0:
-        raise ValueError("sigma 必须是非负有限数值。")
-    if num_modes <= 0:
-        raise ValueError("num_modes 必须为正整数。")
-    if coefficient_limit is not None:
-        coefficient_limit = float(coefficient_limit)
-        if not np.isfinite(coefficient_limit) or coefficient_limit <= 0:
-            raise ValueError("coefficient_limit 必须是正有限数值。")
+    if not np.isfinite(mode_sigmas).all() or np.any(mode_sigmas < 0):
+        raise ValueError("所有 mode_sigmas 必须是非负有限数值。")
+    if mode_limits is not None:
+        mode_limits = np.asarray(mode_limits, dtype=np.float64)
+        if mode_limits.shape != mode_sigmas.shape:
+            raise ValueError("mode_limits 必须与 mode_sigmas 形状一致。")
+        if not np.isfinite(mode_limits).all() or np.any(mode_limits <= 0):
+            raise ValueError("所有 mode_limits 必须是正有限数值。")
     disabled_noll_indices = _validate_disabled_noll_indices(
         disabled_noll_indices, num_modes
     )
     rng = np.random.default_rng(seed)
-    coefficients = rng.normal(
-        0.0, sigma, size=(num_frames, num_modes)
-    )
-    if coefficient_limit is not None:
-        outside = np.abs(coefficients) > coefficient_limit
+    coefficients = rng.normal(size=(num_frames, num_modes)) * mode_sigmas[None, :]
+    if mode_limits is not None:
+        outside = np.abs(coefficients) > mode_limits[None, :]
         while np.any(outside):
-            coefficients[outside] = rng.normal(0.0, sigma, size=int(outside.sum()))
-            outside = np.abs(coefficients) > coefficient_limit
+            columns = np.nonzero(outside)[1]
+            coefficients[outside] = rng.normal(size=int(outside.sum())) * mode_sigmas[
+                columns
+            ]
+            outside = np.abs(coefficients) > mode_limits[None, :]
     coefficients = coefficients.astype(np.float32)
     for noll_index in disabled_noll_indices:
         coefficients[:, noll_index - 1] = 0.0
     return coefficients
+
+
+def _noll_radial_order(noll_index: int) -> int:
+    """Return the radial order n for a one-based Noll index."""
+    if noll_index < 1:
+        raise ValueError("noll_index 必须从 1 开始。")
+    radial_order = 0
+    while noll_index > (radial_order + 1) * (radial_order + 2) // 2:
+        radial_order += 1
+    return radial_order
+
+
+def _expand_radial_order_values(
+    values: list[float] | tuple[float, ...], num_modes: int, name: str
+) -> np.ndarray:
+    maximum_order = _noll_radial_order(num_modes)
+    if len(values) != maximum_order + 1:
+        raise ValueError(
+            f"{name} 需要给出径向阶 0..{maximum_order} 的 {maximum_order + 1} 个值。"
+        )
+    values_array = np.asarray(values, dtype=np.float64)
+    if not np.isfinite(values_array).all() or np.any(values_array < 0):
+        raise ValueError(f"{name} 必须全部是非负有限数值。")
+    return np.asarray(
+        [values_array[_noll_radial_order(index)] for index in range(1, num_modes + 1)],
+        dtype=np.float64,
+    )
 
 
 def _resolve_coefficients(
@@ -103,6 +162,57 @@ def _resolve_coefficients(
     """Sample coefficients or scale a saved basis and optionally extend it."""
     base_value = getattr(args, "base_coefficients", None)
     if not base_value:
+        sigma_by_order = getattr(args, "sigma_by_radial_order", None)
+        limit_by_order = getattr(args, "coefficient_limit_by_radial_order", None)
+        if limit_by_order is not None and sigma_by_order is None:
+            raise ValueError(
+                "--coefficient-limit-by-radial-order 必须与 "
+                "--sigma-by-radial-order 一起使用。"
+            )
+        if sigma_by_order is not None:
+            mode_sigmas = _expand_radial_order_values(
+                sigma_by_order, args.num_modes, "--sigma-by-radial-order"
+            )
+            mode_limits = (
+                None
+                if limit_by_order is None
+                else _expand_radial_order_values(
+                    limit_by_order,
+                    args.num_modes,
+                    "--coefficient-limit-by-radial-order",
+                )
+            )
+            coefficients = _sample_coefficients_per_mode(
+                args.num_frames,
+                mode_sigmas,
+                args.seed,
+                disabled_noll_indices,
+                mode_limits=mode_limits,
+            )
+            maximum_order = _noll_radial_order(args.num_modes)
+            return coefficients, {
+                "coefficient_distribution": (
+                    "independent zero-mean Gaussian with radial-order-dependent "
+                    "sigma, truncated by rejection before disabled terms are zeroed"
+                    if mode_limits is not None
+                    else "independent zero-mean Gaussian with radial-order-dependent sigma"
+                ),
+                "coefficient_sigma_rad": None,
+                "coefficient_limit_rad": None,
+                "coefficient_sigma_by_radial_order_rad": {
+                    str(order): float(sigma_by_order[order])
+                    for order in range(maximum_order + 1)
+                },
+                "coefficient_limit_by_radial_order_rad": (
+                    None
+                    if limit_by_order is None
+                    else {
+                        str(order): float(limit_by_order[order])
+                        for order in range(maximum_order + 1)
+                    }
+                ),
+                "seed": int(args.seed),
+            }
         coefficient_limit = getattr(args, "coefficient_limit", None)
         coefficients = _sample_coefficients(
             args.num_frames,
@@ -258,9 +368,12 @@ def _render_grid(
     filename_prefix: str,
     mat_variable: str,
     block_size: int,
+    hardware_png_uint8: bool = False,
 ) -> str:
     mat_dir = output_dir / "mat"
-    png_dir = output_dir / "png_uint16_wrapped"
+    png_dir = output_dir / (
+        "png_uint8_wrapped" if hardware_png_uint8 else "png_uint16_wrapped"
+    )
     mat_dir.mkdir(parents=True, exist_ok=True)
     png_dir.mkdir(parents=True, exist_ok=True)
 
@@ -275,10 +388,16 @@ def _render_grid(
             {mat_variable: phase},
             do_compression=True,
         )
-        write_wrapped_phase_png(
-            png_dir / f"{filename_prefix}{frame}.png",
-            phase,
-        )
+        if hardware_png_uint8:
+            write_wrapped_phase_png_uint8(
+                png_dir / f"{filename_prefix}{frame}.png",
+                phase,
+            )
+        else:
+            write_wrapped_phase_png(
+                png_dir / f"{filename_prefix}{frame}.png",
+                phase,
+            )
     return strategy
 
 
@@ -314,6 +433,7 @@ def generate(args: argparse.Namespace) -> Path:
         filename_prefix="SLM_hw",
         mat_variable="phase_hw",
         block_size=args.render_block_size,
+        hardware_png_uint8=True,
     )
 
     active_noll_indices = [
@@ -364,7 +484,7 @@ def generate(args: argparse.Namespace) -> Path:
         "phase_sign_convention": "NeuWS uses aperture * exp(-1j * proj_sim)",
         "hardware_output": {
             "mat": f"hardware_{hardware_size}/mat/SLM_hwN.mat:phase_hw",
-            "png": f"hardware_{hardware_size}/png_uint16_wrapped/SLM_hwN.png",
+            "png": f"hardware_{hardware_size}/png_uint8_wrapped/SLM_hwN.png",
         },
         "model_output": {
             "mat": f"model_{model_size}/mat/SLM_simN.mat:proj_sim",
@@ -372,7 +492,8 @@ def generate(args: argparse.Namespace) -> Path:
         },
         "png_phase_encoding": {
             "wrap_interval_rad": [0.0, 2.0 * math.pi],
-            "integer_range": [0, 65535],
+            "model_integer_range": [0, 65535],
+            "hardware_integer_range": [0, 255],
             "hardware_lut_applied": False,
             "warning": "Apply the device-specific SLM phase LUT before hardware use.",
         },
@@ -408,11 +529,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--sigma", type=float, default=5.0)
     parser.add_argument(
+        "--sigma-by-radial-order",
+        nargs="+",
+        type=float,
+        help=(
+            "Optional Gaussian sigma for every radial order n=0..n_max. "
+            "Overrides --sigma for newly sampled coefficients."
+        ),
+    )
+    parser.add_argument(
         "--coefficient-limit",
         type=float,
         help=(
             "Optional absolute coefficient limit in radians. Gaussian samples "
             "outside [-limit, limit] are rejected and resampled."
+        ),
+    )
+    parser.add_argument(
+        "--coefficient-limit-by-radial-order",
+        nargs="+",
+        type=float,
+        help=(
+            "Optional absolute coefficient limit for every radial order n=0..n_max. "
+            "Used with --sigma-by-radial-order."
         ),
     )
     parser.add_argument("--seed", type=int, default=20260731)

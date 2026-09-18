@@ -71,3 +71,13 @@ def write_wrapped_phase_png(path_value: str | Path, phase: np.ndarray) -> None:
     wrapped = np.mod(phase, 2.0 * math.pi)
     encoded = np.rint(wrapped * (65535.0 / (2.0 * math.pi))).astype(np.uint16)
     Image.fromarray(encoded).save(path_value)
+
+
+def write_wrapped_phase_png_uint8(path_value: str | Path, phase: np.ndarray) -> None:
+    """Save wrapped phase [0, 2pi) as an 8-bit SLM command image [0, 255]."""
+    phase = np.asarray(phase, dtype=np.float32)
+    if not np.isfinite(phase).all():
+        raise ValueError("Cannot save a phase containing NaN or infinite values.")
+    wrapped = np.mod(phase, 2.0 * math.pi)
+    encoded = np.rint(wrapped * (255.0 / (2.0 * math.pi))).astype(np.uint8)
+    Image.fromarray(encoded, mode="L").save(path_value)
