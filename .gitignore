@@ -2,6 +2,7 @@
 /data/
 /outputs/
 /vis/
+/neuws_hy/data/
 
 # Raw acquisition files, archives, and large generated arrays
 *.bin
