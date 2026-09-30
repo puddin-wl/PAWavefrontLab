@@ -33,7 +33,7 @@ NOISE_SEED = 0
 # ================================================================
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def build_command() -> list[str]:

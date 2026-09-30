@@ -37,19 +37,20 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from preprocessing.pa_denoising import load_template_csv  # noqa: E402
-from preprocessing.pa_reference_guided_denoising import (  # noqa: E402
+from denoising.pa_denoising import load_template_csv  # noqa: E402
+from denoising.pa_reference_guided_denoising import (  # noqa: E402
     ALGORITHM_VERSION,
     calibrate_experiment_reference_guided,
     load_packed12_reference_guided_projection,
 )
-from preprocessing.pa_reference_guided_gpu import ReferenceGuidedGpuPipeline  # noqa: E402
+from denoising.pa_reference_guided_gpu import ReferenceGuidedGpuPipeline  # noqa: E402
 from tools import prepare_adaptive_real_dataset as base  # noqa: E402
 
 
 DEFAULT_TEACHER_TEMPLATE = (
     PROJECT_ROOT
-    / "motor_crosstalk_denoise"
+    / "denoising"
+    / "motor_crosstalk"
     / "template"
     / "motor_crosstalk_template_v1.csv"
 )

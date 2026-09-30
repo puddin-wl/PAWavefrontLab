@@ -24,11 +24,12 @@ from scipy.signal.windows import tukey
 
 
 WORK_DIR = Path(__file__).resolve().parents[1]
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from preprocessing.pa_denoising import clean_traces, decode_packed12  # noqa: E402
+from dataio.packed12 import decode_packed12  # noqa: E402
+from denoising.pa_denoising import clean_traces  # noqa: E402
 
 
 DEFAULT_ANALYSIS = WORK_DIR / "aline_analysis" / "analysis.json"

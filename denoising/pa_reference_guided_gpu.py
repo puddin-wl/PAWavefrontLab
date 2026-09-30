@@ -18,7 +18,7 @@ host/device and memory-allocation gaps between chunks:
 * row-wise medians use one shared-memory RawKernel instead of CuPy's generic
   partition path, removing its many internal launches/synchronizations.
 
-CuPy is imported lazily through :mod:`preprocessing.pa_denoising_gpu` so CPU-
+CuPy is imported lazily through :mod:`denoising.pa_denoising_gpu` so CPU-
 only environments can still import the project.
 """
 
@@ -28,7 +28,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from preprocessing.pa_denoising_gpu import (
+from denoising.pa_denoising_gpu import (
     _correlation_terms_gpu,
     _require_cupy,
     _template_energy_cpu,

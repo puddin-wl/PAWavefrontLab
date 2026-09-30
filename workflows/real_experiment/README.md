@@ -3,7 +3,7 @@
 `run_pipeline.py` 是真实 PA 实验的统一总控入口。它不重复实现算法，而是按顺序启动现有独立程序：
 
 1. `tools/prepare_reference_guided_real_dataset.py`：reference-guided A-line 去相关、excess-RMS 与 NeuWS 建集；
-2. `recon_exp_data.py`：NeuWS 网络训练与系统像差恢复；
+2. `workflows/reconstruction/reconstruct_neuws.py`：NeuWS 网络训练与系统像差恢复；
 3. `tools/export_slm_correction.py`：**训练完成后立即**导出可加载的 1080×1080 SLM 校正相位；
 4. `tools/fit_recovered_zernike.py`：随后进行 Noll 1–28 Zernike 拟合与分析。
 

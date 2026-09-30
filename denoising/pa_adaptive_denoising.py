@@ -17,8 +17,8 @@ from typing import Iterable, Sequence
 import numpy as np
 from scipy.ndimage import gaussian_filter1d, label, uniform_filter1d
 
-from preprocessing.pa_denoising import correlation_terms
-from preprocessing.packed12 import decode_packed12, packed12_byte_count
+from denoising.pa_denoising import correlation_terms
+from dataio.packed12 import decode_packed12, packed12_byte_count
 
 
 ALGORITHM_VERSION = "adaptive-aline-v1"
@@ -948,7 +948,7 @@ def clean_adaptive_traces(
     cleaned = residual
     for model in calibration.templates:
         if backend == "cuda":
-            from preprocessing.pa_denoising_gpu import clean_traces_gpu_adaptive
+            from denoising.pa_denoising_gpu import clean_traces_gpu_adaptive
 
             cleaned, matched = clean_traces_gpu_adaptive(
                 cleaned,

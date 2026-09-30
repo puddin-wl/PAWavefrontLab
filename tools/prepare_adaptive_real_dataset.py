@@ -24,8 +24,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from image_utils import write_unit_png  # noqa: E402
-from preprocessing.pa_adaptive_denoising import (  # noqa: E402
+from analysis.image_utils import write_unit_png  # noqa: E402
+from denoising.pa_adaptive_denoising import (  # noqa: E402
     AdaptiveCalibration,
     AdaptiveProjectionResult,
     CalibrationError,
@@ -35,7 +35,7 @@ from preprocessing.pa_adaptive_denoising import (  # noqa: E402
     sample_packed12_alines,
     verify_source_records,
 )
-from preprocessing.pa_denoising_gpu import cuda_backend_info  # noqa: E402
+from denoising.pa_denoising_gpu import cuda_backend_info  # noqa: E402
 
 
 def _normalize(image: np.ndarray) -> np.ndarray:

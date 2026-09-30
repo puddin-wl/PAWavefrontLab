@@ -24,18 +24,19 @@ if str(PROJECT_ROOT) not in sys.path:
 
 DEFAULT_NOISE_TEMPLATE = (
     PROJECT_ROOT
-    / "motor_crosstalk_denoise"
+    / "denoising"
+    / "motor_crosstalk"
     / "template"
     / "motor_crosstalk_template_v1.csv"
 )
 
-from image_utils import write_unit_png  # noqa: E402
-from preprocessing.pa_denoising import (  # noqa: E402
+from analysis.image_utils import write_unit_png  # noqa: E402
+from denoising.pa_denoising import (  # noqa: E402
     TemplateXcorrProjectionResult,
     load_packed12_template_xcorr_mip_projection,
     load_template_csv,
 )
-from preprocessing.pa_denoising_gpu import (  # noqa: E402
+from denoising.pa_denoising_gpu import (  # noqa: E402
     cuda_backend_info,
     load_packed12_template_xcorr_mip_projection_gpu,
 )

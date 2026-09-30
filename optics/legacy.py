@@ -14,7 +14,7 @@ from torch.fft import fft2, fftshift, irfftn, rfftn, ifftshift
 from PIL import Image
 import matplotlib.pyplot as plt
 
-from optics import zernike_basis_torch
+from .propagation import zernike_basis_torch
 
 ang_to_unit = lambda x : ((x / np.pi) + 1) / 2
 

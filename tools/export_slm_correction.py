@@ -20,7 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from image_utils import write_wrapped_phase_png_uint8  # noqa: E402
+from analysis.image_utils import write_wrapped_phase_png_uint8  # noqa: E402
 from optics import zernike_basis_numpy  # noqa: E402
 
 

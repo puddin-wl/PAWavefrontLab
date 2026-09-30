@@ -114,7 +114,7 @@ CUDA。
 打开项目根目录下的：
 
 ```text
-run_single_image.py
+workflows/static_simulation/single_image_demo.py
 ```
 
 主要修改：
@@ -142,7 +142,7 @@ DEVICE = "cuda"
 
 ### 4.2 运行
 
-打开 `run_single_image.py`，点击 VS Code 右上角 **Run Python File**。
+打开 `workflows/static_simulation/single_image_demo.py`，点击 VS Code 右上角 **Run Python File**。
 
 ### 4.3 查看结果
 
@@ -447,17 +447,17 @@ outputs/SCENE_NAME/evaluation/     # 指标、误差和最终图
 | --- | --- | --- |
 | `README.md` | 项目总入口和原始命令行说明 | 阅读，不必修改 |
 | `requirements.txt` | Python 依赖 | 新环境安装时使用 |
-| `run_single_image.py` | 单张图片指定像差的 VS Code 入口 | 做任务 A 时修改配置区 |
-| `run_dataset.py` | 较早的随机数据集 VS Code 入口 | 完整五步仿真不使用 |
-| `recon_exp_data.py` | NeuWS 训练和最终结果保存 | 一般不直接修改 |
-| `optics.py` | Zernike、孔径、复场、PSF 和卷积物理模型 | 核心代码，不随意修改 |
-| `dataset.py` | 加载并严格检查 `SLM_simN/SLM_rawN` | 一般不修改 |
-| `networks.py` | 原论文 NeuWS 物体/像差反演网络 | 核心网络，不随意修改 |
-| `utils.py` | 网络使用的 FFT 卷积、Zernike 等旧共享函数 | 一般不修改 |
-| `evaluation.py` | PSNR、SSIM、配准和相位误差算法 | 一般不修改 |
-| `image_utils.py` | 图片读取、归一化和 16 位 PNG 保存 | 一般不修改 |
-| `preprocessing/photoacoustic.py` | 三维光声减 2048、负值置零和第 0 维投影 | 一般不修改 |
-| `aberration_config.py` | 解析显式 Zernike 系数 | 任务 A 的底层支持 |
+| `single_image_demo.py` | 单张图片指定像差的 VS Code 入口 | 做任务 A 时修改配置区 |
+| `legacy_run_dataset.py` | 较早的随机数据集 VS Code 入口 | 完整五步仿真不使用 |
+| `../reconstruction/reconstruct_neuws.py` | NeuWS 训练和最终结果保存 | 一般不直接修改 |
+| `../../optics/propagation.py` | Zernike、孔径、复场、PSF 和卷积物理模型 | 核心代码，不随意修改 |
+| `../../dataio/neuws_dataset.py` | 加载并严格检查 `SLM_simN/SLM_rawN` | 一般不修改 |
+| `../../networks/neuws.py` | 原论文 NeuWS 物体/像差反演网络 | 核心网络，不随意修改 |
+| `../../optics/legacy.py` | 网络使用的 FFT 卷积、Zernike 等旧共享函数 | 一般不修改 |
+| `../../analysis/evaluation.py` | PSNR、SSIM、配准和相位误差算法 | 一般不修改 |
+| `../../analysis/image_utils.py` | 图片读取、归一化和 16 位 PNG 保存 | 一般不修改 |
+| `../../dataio/photoacoustic.py` | 三维光声减 2048、负值置零和第 0 维投影 | 一般不修改 |
+| `../../optics/aberrations.py` | 解析显式 Zernike 系数 | 任务 A 的底层支持 |
 | `docs/migration.md` | MATLAB 到 Python 的迁移边界 | 需要理解迁移时阅读 |
 
 ### `workflows/static_simulation/`

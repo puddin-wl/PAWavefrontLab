@@ -14,19 +14,19 @@
 *.npz
 
 # Reproducible denoising outputs and local result archives
-/motor_crosstalk_denoise/runs/
-/motor_crosstalk_denoise/results_archive/*
-!/motor_crosstalk_denoise/results_archive/README.md
-/noise_cause_review/aline_analysis/*.png
-/noise_cause_review/pd_comparison/
-/noise_cause_review/time_gate_test/
-/noise_cause_review/results/*
-!/noise_cause_review/results/.gitkeep
+/denoising/motor_crosstalk/runs/
+/denoising/motor_crosstalk/results_archive/*
+!/denoising/motor_crosstalk/results_archive/README.md
+/denoising/noise_review/aline_analysis/*.png
+/denoising/noise_review/pd_comparison/
+/denoising/noise_review/time_gate_test/
+/denoising/noise_review/results/*
+!/denoising/noise_review/results/.gitkeep
 
 # Existing tracked PPT figures are the reviewed canonical set. New generated
 # figures stay local unless explicitly reviewed and force-added.
-/motor_crosstalk_denoise/ppt_assets/*
-!/motor_crosstalk_denoise/ppt_assets/README.md
+/denoising/motor_crosstalk/ppt_assets/*
+!/denoising/motor_crosstalk/ppt_assets/README.md
 
 # Machine-local real-experiment configuration
 /configs/real_experiment.json
@@ -34,6 +34,7 @@
 # Local run logs and temporary review patches (formal log/*.md notes stay tracked)
 /log/*.log
 /*.patch
+/archives/patches/*.patch
 
 # Local CUDA profiler outputs
 *.nsys-rep

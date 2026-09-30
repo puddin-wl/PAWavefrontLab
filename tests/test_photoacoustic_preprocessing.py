@@ -9,8 +9,8 @@ import scipy.io as sio
 import tifffile
 from PIL import Image
 
-from dataset import BatchDataset
-from preprocessing.photoacoustic import (
+from dataio import BatchDataset
+from dataio.photoacoustic import (
     preprocess_photoacoustic_volume,
     subtract_photoacoustic_baseline,
 )

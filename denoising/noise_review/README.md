@@ -1,7 +1,7 @@
 # Noise Cause Review
 
 > 正式、易找的去噪入口已经整理到项目根目录
-> [`motor_crosstalk_denoise/`](../motor_crosstalk_denoise/)。本目录保留为原始研究
+> [`denoising/motor_crosstalk/`](../motor_crosstalk/)。本目录保留为原始研究
 > 记录和溯源材料，日常处理新数据请使用新目录中的 `run_denoise.py`。
 
 > 本目录中的绝对数据路径是当时机器的 example/provenance 配置。历史脚本为保留

@@ -17,7 +17,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 from scipy.signal import fftconvolve
 
-from preprocessing.packed12 import (
+from dataio.packed12 import (
     decode_packed12,
     packed12_byte_count,
 )

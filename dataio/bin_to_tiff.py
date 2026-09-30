@@ -14,7 +14,7 @@ import tifffile
 from PIL import Image, TiffImagePlugin
 from tqdm import tqdm
 
-from preprocessing.packed12 import (
+from dataio.packed12 import (
     BITS_PER_SAMPLE,
     decode_packed12,
     packed12_byte_count,

@@ -20,16 +20,16 @@ import tifffile
 from scipy.ndimage import median_filter
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from preprocessing.pa_denoising import (  # noqa: E402
+from denoising.pa_denoising import (  # noqa: E402
     TemplateXcorrProjectionResult,
     load_packed12_template_xcorr_mip_projection,
     load_template_csv,
 )
-from preprocessing.pa_denoising_gpu import (  # noqa: E402
+from denoising.pa_denoising_gpu import (  # noqa: E402
     load_packed12_template_xcorr_mip_projection_gpu,
 )
 

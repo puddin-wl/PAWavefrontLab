@@ -1,5 +1,9 @@
 # 第一轮仓库审计
 
+> 本文是整理前的历史审计记录。当前目录结构已经按功能拆分为 `dataio/`、
+> `networks/`、`optics/`、`analysis/`、`denoising/` 和 `workflows/`；现行入口以
+> 根目录 `PROJECT_ENTRYPOINTS.md` 为准。
+
 审计基线：`agent/pytest-test-log`，提交 `c04aa60`。整理前测试结果为
 `55 passed, 10 skipped`。
 
@@ -30,7 +34,7 @@
 | canonical 展示图 | `motor_crosstalk_denoise/ppt_assets/` 已有 9 图 |
 | 本地生成物 | `data/`, `outputs/`, `vis/`, BIN/MAT/TIFF/NPY 与 results/runs |
 
-## 故意延后的工作
+## 第一轮当时故意延后的工作
 
 - 不把根模块整体迁到 `src/` package，不大改 NeuWS import。
 - 不在第一轮移动 `noise_cause_review/`；未来整体迁移到 archive 时再修复历史脚本。

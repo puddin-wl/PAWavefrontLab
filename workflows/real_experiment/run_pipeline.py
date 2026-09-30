@@ -31,7 +31,8 @@ DEFAULT_CONFIG = PROJECT_ROOT / "configs" / "real_experiment.json"
 DEFAULT_MEASUREMENT_GLOB = "s*_600_600_512_PA1.bin"
 DEFAULT_TEACHER_TEMPLATE = (
     PROJECT_ROOT
-    / "motor_crosstalk_denoise"
+    / "denoising"
+    / "motor_crosstalk"
     / "template"
     / "motor_crosstalk_template_v1.csv"
 )
@@ -438,7 +439,7 @@ def _build_training_command(config: dict[str, Any], dataset_dir: Path, scene_nam
     root_dir = _resolve_path(section.get("root_dir", "."))
     command = [
         sys.executable,
-        str(PROJECT_ROOT / "recon_exp_data.py"),
+        str(PROJECT_ROOT / "workflows" / "reconstruction" / "reconstruct_neuws.py"),
         "--root_dir",
         str(root_dir),
         "--data_dir",

@@ -8,7 +8,7 @@ from torch.fft import fft2, fftshift
 
 import numpy as np
 import torchvision.transforms
-from utils import compute_zernike_basis, fft_2xPad_Conv2D
+from optics.legacy import compute_zernike_basis, fft_2xPad_Conv2D
 
 
 class sine_act(nn.Module):
@@ -457,6 +457,5 @@ class MovingDiffuse(TemporalZernNet):
             y = torch.stack(y, axis=0)
 
         return y, _kernel, sim_g, sim_phs, I_est
-
 
 

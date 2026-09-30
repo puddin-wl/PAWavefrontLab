@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from preprocessing.packed12 import decode_packed12, packed12_byte_count
+from dataio.packed12 import decode_packed12, packed12_byte_count
 
 
 def _pack(values: np.ndarray) -> np.ndarray:

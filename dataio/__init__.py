@@ -1,7 +1,8 @@
-"""项目统一使用的数据预处理接口。"""
+"""NeuWS datasets and photoacoustic file decoding."""
 
-from preprocessing.packed12 import decode_packed12, packed12_byte_count
-from preprocessing.photoacoustic import (
+from .neuws_dataset import BatchDataset
+from .packed12 import decode_packed12, packed12_byte_count
+from .photoacoustic import (
     load_photoacoustic_projection,
     maximum_intensity_projection,
     preprocess_photoacoustic_volume,
@@ -9,6 +10,7 @@ from preprocessing.photoacoustic import (
 )
 
 __all__ = [
+    "BatchDataset",
     "decode_packed12",
     "load_photoacoustic_projection",
     "maximum_intensity_projection",

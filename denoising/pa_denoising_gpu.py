@@ -14,8 +14,8 @@ import importlib.util
 from pathlib import Path
 import numpy as np
 
-from preprocessing.pa_denoising import TemplateXcorrProjectionResult
-from preprocessing.packed12 import decode_packed12, packed12_byte_count
+from denoising.pa_denoising import TemplateXcorrProjectionResult
+from dataio.packed12 import decode_packed12, packed12_byte_count
 
 
 _PRELOADED_CUDA_LIBRARIES: list[ctypes.CDLL] = []

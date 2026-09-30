@@ -41,7 +41,7 @@ APERTURE_HEIGHT = None
 # ================================================================
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def build_command() -> list[str]:
@@ -79,7 +79,7 @@ def build_command() -> list[str]:
 
 def main() -> None:
     print(
-        "提示：run_dataset.py 已 deprecated；完整新实验请使用 "
+        "提示：legacy_run_dataset.py 已 deprecated；完整新实验请使用 "
         "workflows/static_simulation/step1 到 step5。",
         flush=True,
     )

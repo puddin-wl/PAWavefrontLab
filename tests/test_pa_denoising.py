@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from preprocessing.pa_denoising import (
+from denoising.pa_denoising import (
     clean_traces,
     excess_rms_projection,
     load_packed12_excess_rms_projection,

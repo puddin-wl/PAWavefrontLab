@@ -5,13 +5,13 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from preprocessing.pa_adaptive_denoising import (
+from denoising.pa_adaptive_denoising import (
     adaptive_excess_rms_projection,
     robust_linear_detrend,
 )
-from preprocessing.pa_denoising import clean_traces
-from preprocessing.packed12 import decode_packed12
-from preprocessing.pa_reference_guided_denoising import ReferenceGuidedTemplate
+from denoising.pa_denoising import clean_traces
+from dataio.packed12 import decode_packed12
+from denoising.pa_reference_guided_denoising import ReferenceGuidedTemplate
 
 
 def _template() -> np.ndarray:
@@ -54,7 +54,7 @@ def _calibration(depth: int = 128):
 
 def _pipeline():
     try:
-        from preprocessing.pa_reference_guided_gpu import ReferenceGuidedGpuPipeline
+        from denoising.pa_reference_guided_gpu import ReferenceGuidedGpuPipeline
 
         return ReferenceGuidedGpuPipeline(_calibration())
     except RuntimeError as exc:

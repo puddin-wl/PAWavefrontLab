@@ -10,7 +10,7 @@ import scipy.io as sio
 import torch
 from PIL import Image
 
-from dataset import BatchDataset
+from dataio import BatchDataset
 from optics import simulate_measurements, slm_complex_field
 from workflows.static_simulation.workflow import (
     SimulationSettings,

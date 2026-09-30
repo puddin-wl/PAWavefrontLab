@@ -1,8 +1,8 @@
 """Reference-guided experiment-adaptive denoising for photoacoustic A-lines.
 
 This module combines:
-1) the validated fixed-template decorrelation core from preprocessing.pa_denoising;
-2) adaptive signal/noise depth-window calibration from preprocessing.pa_adaptive_denoising.
+1) the validated fixed-template decorrelation core from denoising.pa_denoising;
+2) adaptive signal/noise depth-window calibration from denoising.pa_adaptive_denoising.
 
 The historical motor-crosstalk template acts only as a teacher. High-confidence
 matches from the current experiment are aligned and robustly averaged to form a
@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 from scipy.signal.windows import tukey
 
-from preprocessing.pa_adaptive_denoising import (
+from denoising.pa_adaptive_denoising import (
     AdaptiveProjectionResult,
     CalibrationError,
     adaptive_excess_rms_projection,
@@ -32,8 +32,8 @@ from preprocessing.pa_adaptive_denoising import (
     robust_linear_detrend,
     sample_packed12_alines,
 )
-from preprocessing.pa_denoising import clean_traces
-from preprocessing.packed12 import decode_packed12, packed12_byte_count
+from denoising.pa_denoising import clean_traces
+from dataio.packed12 import decode_packed12, packed12_byte_count
 
 ALGORITHM_VERSION = "reference-guided-adaptive-aline-v1"
 
@@ -522,7 +522,7 @@ def load_packed12_reference_guided_projection(
     row_starts = list(range(0, calibration.height, chunk_rows))
 
     if backend == "cuda":
-        from preprocessing.pa_reference_guided_gpu import ReferenceGuidedGpuPipeline
+        from denoising.pa_reference_guided_gpu import ReferenceGuidedGpuPipeline
 
         owns_gpu_pipeline = gpu_pipeline is None
         if gpu_pipeline is None:

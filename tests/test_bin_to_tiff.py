@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import tifffile
 
-from savetif.bin_to_tiff import (
+from dataio.bin_to_tiff import (
     convert_bin_to_mip_tiff,
     convert_bin_to_tiff,
     convert_directory,

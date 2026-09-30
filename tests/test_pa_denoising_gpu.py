@@ -3,16 +3,16 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from preprocessing.pa_denoising import (
+from denoising.pa_denoising import (
     clean_traces,
     load_packed12_template_xcorr_mip_projection,
 )
-from preprocessing.pa_denoising_gpu import (
+from denoising.pa_denoising_gpu import (
     clean_traces_gpu,
     clean_traces_gpu_adaptive,
     load_packed12_template_xcorr_mip_projection_gpu,
 )
-from preprocessing.pa_adaptive_denoising import (
+from denoising.pa_adaptive_denoising import (
     AdaptiveCalibration,
     AdaptiveTemplate,
     clean_adaptive_traces,

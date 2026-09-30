@@ -7,7 +7,7 @@ from unittest.mock import patch, sentinel
 
 import pytest
 
-from preprocessing.pa_adaptive_denoising import CalibrationError
+from denoising.pa_adaptive_denoising import CalibrationError
 from tools import prepare_adaptive_real_dataset as prepare_module
 
 

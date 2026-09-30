@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import numpy as np
 
-from preprocessing.pa_reference_guided_denoising import (
+from denoising.pa_reference_guided_denoising import (
     fit_experiment_template_from_teacher,
 )
-from preprocessing.pa_denoising import clean_traces
+from denoising.pa_denoising import clean_traces
 
 
 def _teacher() -> np.ndarray:

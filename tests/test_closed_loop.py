@@ -10,9 +10,9 @@ import scipy.io as sio
 import torch
 from PIL import Image
 
-from dataset import BatchDataset
-import run_dataset
-import run_single_image
+from dataio import BatchDataset
+from workflows.static_simulation import legacy_run_dataset as run_dataset
+from workflows.static_simulation import single_image_demo as run_single_image
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -141,7 +141,7 @@ class ClosedLoopTests(unittest.TestCase):
             subprocess.run(
                 [
                     sys.executable,
-                    str(ROOT / "recon_exp_data.py"),
+                    str(ROOT / "workflows" / "reconstruction" / "reconstruct_neuws.py"),
                     "--root_dir", str(run_dir),
                     "--data_dir", str(data_dir),
                     "--scene_name", "test",

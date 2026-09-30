@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from preprocessing.pa_adaptive_denoising import (
+from denoising.pa_adaptive_denoising import (
     AdaptiveCalibration,
     AdaptiveTemplate,
     CalibrationError,

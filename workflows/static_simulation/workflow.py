@@ -18,15 +18,15 @@ import scipy.io as sio
 import torch
 import tifffile
 
-from evaluation import evaluate_images, evaluate_phases
-from image_utils import (
+from analysis.evaluation import evaluate_images, evaluate_phases
+from analysis.image_utils import (
     normalize_square_array,
     read_normalized_square,
     resolve_device,
     write_unit_png,
     write_wrapped_phase_png,
 )
-from preprocessing.photoacoustic import (
+from dataio.photoacoustic import (
     load_photoacoustic_projection,
     preprocess_photoacoustic_volume,
 )
@@ -641,7 +641,7 @@ def reconstruct_static_scene(settings: SimulationSettings) -> Path:
     resolve_device(settings.training_device)
     command = [
         sys.executable,
-        str(settings.project_root / "recon_exp_data.py"),
+        str(settings.project_root / "workflows" / "reconstruction" / "reconstruct_neuws.py"),
         "--root_dir",
         str(settings.result_root),
         "--data_dir",

@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Export clean, numbered PNG assets for a NeuWS experiment presentation."""
+"""Export presentation assets for a real-experiment optical-correction review.
+
+The origin acquisition is an uncorrected, system-aberrated baseline rather than
+ground truth.  Origin/corrected PSNR and SSIM are exported as similarity metrics
+only; they are not evidence of optical-quality improvement.
+"""
 
 from __future__ import annotations
 
@@ -10,14 +15,17 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import scipy.io as sio
 from PIL import Image
 
 
-def _minmax(image: np.ndarray) -> np.ndarray:
+def _minmax(image: np.ndarray, label: str) -> np.ndarray:
     image = np.asarray(image, dtype=np.float32).squeeze()
     minimum, maximum = float(image.min()), float(image.max())
     if image.ndim != 2 or not np.isfinite(image).all() or maximum <= minimum:
-        raise ValueError(f"无法归一化图像，形状/范围为 {image.shape}, {minimum}, {maximum}。")
+        raise ValueError(
+            f"无法归一化 {label}，形状/范围为 {image.shape}, {minimum}, {maximum}。"
+        )
     return np.asarray((image - minimum) / (maximum - minimum), dtype=np.float32)
 
 
@@ -26,39 +34,91 @@ def _write_grayscale(path: Path, image: np.ndarray) -> None:
     Image.fromarray(encoded, mode="L").save(path)
 
 
+def _load_origin(data_dir: Path) -> tuple[np.ndarray, Path]:
+    candidates = (
+        data_dir / "reference" / "origin_projection.npy",
+        data_dir / "reference" / "clear_object.npy",
+    )
+    for path in candidates:
+        if path.is_file():
+            return np.asarray(np.load(path, allow_pickle=False), dtype=np.float32), path
+    raise FileNotFoundError(
+        "找不到 origin baseline；需要 reference/origin_projection.npy，或兼容文件 "
+        "reference/clear_object.npy。"
+    )
+
+
+def _load_corrected(data_dir: Path) -> tuple[np.ndarray, Path]:
+    candidates = (
+        data_dir / "reference" / "optically_corrected_projection.npy",
+        # Legacy output name retained only so old completed runs remain exportable.
+        data_dir / "reference" / "restored_projection.npy",
+    )
+    for path in candidates:
+        if path.is_file():
+            return np.asarray(np.load(path, allow_pickle=False), dtype=np.float32), path
+    raise FileNotFoundError(
+        "找不到 optically corrected acquisition；请先运行 "
+        "tools/evaluate_optical_restoration.py。"
+    )
+
+
+def _load_reconstruction(reconstruction_dir: Path) -> np.ndarray:
+    normalized_path = reconstruction_dir / "reconstructed_object_normalized.npy"
+    if normalized_path.is_file():
+        return _minmax(
+            np.load(normalized_path, allow_pickle=False),
+            "computational NeuWS reconstruction",
+        )
+    mat_path = reconstruction_dir / "final_I_est_network_units.mat"
+    return _minmax(
+        sio.loadmat(mat_path)["image"], "computational NeuWS reconstruction"
+    )
+
+
+def _load_phase(reconstruction_dir: Path) -> np.ndarray:
+    phase_path = reconstruction_dir / "reconstructed_aberration_phase.npy"
+    if phase_path.is_file():
+        return np.asarray(np.load(phase_path, allow_pickle=False), dtype=np.float32)
+    return np.asarray(
+        sio.loadmat(reconstruction_dir / "final_aberration.mat")["phase"],
+        dtype=np.float32,
+    ).squeeze()
+
+
 def export(args: argparse.Namespace) -> Path:
     data_dir = Path(args.data_dir).expanduser().resolve()
     reconstruction_dir = Path(args.reconstruction_dir).expanduser().resolve()
     validation_dir = Path(args.validation_dir).expanduser().resolve()
     correction_dir = Path(args.correction_dir).expanduser().resolve()
-    evaluation_dir = Path(args.evaluation_dir).expanduser().resolve()
     output_dir = Path(args.output_dir).expanduser().resolve()
     if output_dir.exists() and any(output_dir.iterdir()):
         raise FileExistsError(f"PPT素材目录非空，为避免覆盖已停止：{output_dir}")
-    output_dir.mkdir(parents=True, exist_ok=True)
 
-    origin_raw = np.load(data_dir / "reference" / "origin_projection.npy")
-    defocus_raw = np.load(data_dir / "reference" / "defocus_projection.npy")
-    restored_raw = np.load(data_dir / "reference" / "restored_projection.npy")
-    origin = _minmax(origin_raw)
-    defocus = _minmax(defocus_raw)
-    restored = _minmax(restored_raw)
-    computational = _minmax(
-        np.load(reconstruction_dir / "reconstructed_object_normalized.npy")
+    origin_raw, origin_path = _load_origin(data_dir)
+    corrected_raw, corrected_path = _load_corrected(data_dir)
+    origin = _minmax(origin_raw, "origin baseline")
+    corrected = _minmax(corrected_raw, "optically corrected acquisition")
+    computational = _load_reconstruction(reconstruction_dir)
+    phase = _load_phase(reconstruction_dir)
+    slm_phase = np.asarray(
+        np.load(correction_dir / "SLM_final_correction_1080.npy", allow_pickle=False),
+        dtype=np.float32,
     )
-    phase = np.load(reconstruction_dir / "reconstructed_aberration_phase.npy")
-    slm_phase = np.load(correction_dir / "SLM_final_correction_1080.npy")
     training = json.loads(
         (reconstruction_dir / "training_summary.json").read_text(encoding="utf-8")
     )
     metrics = json.loads(
         (validation_dir / "final_validation_report.json").read_text(encoding="utf-8")
     )
+    similarity = metrics["origin_corrected_similarity"]
+    selected = similarity["selected"]
+    quality = metrics["optical_quality_metrics"]
 
-    _write_grayscale(output_dir / "01_origin_ground_truth.png", origin)
-    _write_grayscale(output_dir / "02_defocus_baseline.png", defocus)
-    _write_grayscale(output_dir / "03_computational_reconstruction.png", computational)
-    _write_grayscale(output_dir / "04_optically_restored.png", restored)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    _write_grayscale(output_dir / "01_origin_baseline.png", origin)
+    _write_grayscale(output_dir / "02_computational_reconstruction.png", computational)
+    _write_grayscale(output_dir / "03_optically_corrected_acquisition.png", corrected)
 
     wrapped_phase = np.angle(np.exp(1j * phase))
     fig, axis = plt.subplots(figsize=(7, 6))
@@ -68,7 +128,7 @@ def export(args: argparse.Namespace) -> Path:
     colorbar = fig.colorbar(shown, ax=axis, fraction=0.046, pad=0.04)
     colorbar.set_label("Phase (rad)")
     fig.tight_layout()
-    fig.savefig(output_dir / "05_recovered_system_aberration_phase.png", dpi=200)
+    fig.savefig(output_dir / "04_recovered_system_aberration_phase.png", dpi=200)
     plt.close(fig)
 
     fig, axis = plt.subplots(figsize=(7, 6))
@@ -78,7 +138,7 @@ def export(args: argparse.Namespace) -> Path:
     colorbar = fig.colorbar(shown, ax=axis, fraction=0.046, pad=0.04)
     colorbar.set_label("Wrapped command phase (rad)")
     fig.tight_layout()
-    fig.savefig(output_dir / "06_final_slm_correction_phase.png", dpi=200)
+    fig.savefig(output_dir / "05_final_slm_correction_phase.png", dpi=200)
     plt.close(fig)
 
     loss = np.asarray(training["loss_history"], dtype=np.float64)
@@ -87,119 +147,121 @@ def export(args: argparse.Namespace) -> Path:
     fig, axis = plt.subplots(figsize=(8, 5))
     epochs = np.arange(1, loss.size + 1)
     axis.plot(epochs, loss, color="#1769aa", linewidth=1.3, label="Epoch mean MSE")
-    if best_epoch:
+    if best_epoch and 1 <= int(best_epoch) <= loss.size:
         axis.axvline(best_epoch, color="#d32f2f", linestyle="--", linewidth=1.5)
         axis.scatter(
-            [best_epoch], [loss[best_epoch - 1]], color="#d32f2f", zorder=3,
+            [best_epoch],
+            [loss[int(best_epoch) - 1]],
+            color="#d32f2f",
+            zorder=3,
             label=f"Best smoothed state: epoch {best_epoch}",
         )
     axis.set_yscale("log")
     axis.set_xlabel("Epoch")
     axis.set_ylabel("Mean squared error")
-    axis.set_title(f"NeuWS training loss (early stop at epoch {loss.size})")
+    axis.set_title(f"NeuWS training loss ({loss.size} epochs run)")
     axis.grid(True, which="both", alpha=0.25)
     axis.legend()
     fig.tight_layout()
-    fig.savefig(output_dir / "07_training_loss.png", dpi=200)
+    fig.savefig(output_dir / "06_training_loss.png", dpi=200)
     plt.close(fig)
 
-    labels = ["Defocus", "Optical\nrestoration", "Computational\nreconstruction"]
-    psnr = [
-        metrics["defocus_baseline"]["registered"]["psnr_db"],
-        metrics["optically_restored"]["registered"]["psnr_db"],
-        metrics["computational_reconstruction"]["registered"]["psnr_db"],
-    ]
-    ssim = [
-        metrics["defocus_baseline"]["registered"]["ssim"],
-        metrics["optically_restored"]["registered"]["ssim"],
-        metrics["computational_reconstruction"]["registered"]["ssim"],
-    ]
-    colors = ["#9e9e9e", "#2e7d32", "#1769aa"]
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    bars = axes[0].bar(labels, psnr, color=colors)
+    mode_label = (
+        "Registered overlap"
+        if selected["mode"] == "registered_overlap"
+        else "Same coordinates"
+    )
+    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+    psnr_bar = axes[0].bar([mode_label], [selected["psnr_db"]], color="#5e35b1")
     axes[0].set_ylabel("PSNR (dB)")
-    axes[0].set_title("Registered PSNR versus origin")
-    axes[0].set_ylim(0, max(psnr) * 1.2)
-    axes[0].bar_label(bars, fmt="%.2f", padding=3)
-    bars = axes[1].bar(labels, ssim, color=colors)
+    axes[0].set_title("Origin/corrected similarity")
+    axes[0].bar_label(psnr_bar, fmt="%.2f", padding=3)
+    ssim_bar = axes[1].bar([mode_label], [selected["ssim"]], color="#00897b")
     axes[1].set_ylabel("SSIM")
-    axes[1].set_title("Registered SSIM versus origin")
     axes[1].set_ylim(0, 1.0)
-    axes[1].bar_label(bars, fmt="%.3f", padding=3)
+    axes[1].set_title("Origin/corrected similarity")
+    axes[1].bar_label(ssim_bar, fmt="%.3f", padding=3)
     for axis in axes:
         axis.grid(True, axis="y", alpha=0.25)
-    fig.suptitle("Final optical correction validation", fontsize=15)
+    fig.suptitle("Similarity only — not an optical-quality improvement score", fontsize=14)
     fig.tight_layout()
-    fig.savefig(output_dir / "08_psnr_ssim_comparison.png", dpi=200)
+    fig.savefig(output_dir / "07_origin_corrected_similarity.png", dpi=200)
     plt.close(fig)
 
     shutil.copy2(
         validation_dir / "final_validation_comparison.png",
-        output_dir / "09_final_validation_overview.png",
-    )
-    shutil.copy2(
-        evaluation_dir / "reconstruction_comparison.png",
-        output_dir / "10_computational_reconstruction_overview.png",
+        output_dir / "08_origin_corrected_similarity_overview.png",
     )
     shutil.copy2(
         correction_dir / "SLM_final_correction_preview.png",
-        output_dir / "11_slm_correction_derivation.png",
+        output_dir / "09_slm_correction_derivation.png",
     )
 
-    shared_max = max(float(origin_raw.max()), float(defocus_raw.max()), float(restored_raw.max()))
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    shared_max = max(float(origin_raw.max()), float(corrected_raw.max()))
+    if not np.isfinite(shared_max) or shared_max <= 0:
+        raise ValueError("origin/re 共用强度尺度的最大值必须为有限正数。")
+    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
     shared_panels = (
-        (origin_raw, "Origin"),
-        (defocus_raw, "Defocus"),
-        (restored_raw, "Optically restored"),
+        (origin_raw, "Origin baseline\n(uncorrected, system-aberrated)"),
+        (corrected_raw, "Optically corrected acquisition"),
     )
     for axis, (image, title) in zip(axes, shared_panels):
         axis.imshow(image / shared_max, cmap="gray", vmin=0, vmax=1)
         axis.set_title(title)
         axis.axis("off")
-    fig.suptitle(f"Experimental acquisitions on one shared intensity scale (max={shared_max:.0f})")
+    fig.suptitle(
+        f"Experimental acquisitions on one shared intensity scale (max={shared_max:.0f})"
+    )
     fig.tight_layout()
-    fig.savefig(output_dir / "12_experimental_shared_intensity_scale.png", dpi=200)
+    fig.savefig(output_dir / "10_experimental_shared_intensity_scale.png", dpi=200)
     plt.close(fig)
 
     shutil.copy2(
         validation_dir / "final_validation_report.json",
-        output_dir / "13_final_metrics.json",
+        output_dir / "11_optical_correction_consistency_report.json",
     )
 
-    optical = metrics["optically_restored"]["registered"]
-    baseline = metrics["defocus_baseline"]["registered"]
-    digital = metrics["computational_reconstruction"]["registered"]
-    readme = f"""# NeuWS 2026-08-12 PPT素材说明
+    shift = selected["proposed_shift_yx_pixels"]
+    registration_text = (
+        "位移在阈值内，采用 registered-overlap comparison。"
+        if selected["registration_accepted"]
+        else "位移超过阈值，拒绝配准结果并采用 same-coordinate comparison。"
+    )
+    readme = f"""# NeuWS 真实实验 PPT 素材说明
+
+## 物理语义
+
+- origin 是系统自身带像差时采集的 uncorrected/system-aberrated baseline，不是 clear ground truth。
+- s01–sNN 是系统像差与已知 SLM 人工调制共同作用的 NeuWS 反演输入，不是最终验证 baseline。
+- computational reconstruction 只作为反演一致性参考。
+- optically corrected acquisition 是加载恢复系统像差的反相校正后重新采集的 re。
 
 ## 建议展示顺序
 
-1. `01_origin_ground_truth.png`：无故意离焦的参考真值。
-2. `02_defocus_baseline.png`：故意离焦后的基准图。
-3. `03_computational_reconstruction.png`：NeuWS计算恢复图。
-4. `04_optically_restored.png`：把恢复相位加载到SLM后重新采集的图。
-5. `05_recovered_system_aberration_phase.png`：网络恢复的系统像差相位。
-6. `06_final_slm_correction_phase.png`：最终加载到1080×1080 SLM的校正相位。
-7. `07_training_loss.png`：训练损失与自动早停。
-8. `08_psnr_ssim_comparison.png`：定量指标柱状图。
-9. `09_final_validation_overview.png`：最终验证总览，适合结论页。
-10. `10_computational_reconstruction_overview.png`：计算重建过程总览。
-11. `11_slm_correction_derivation.png`：600相位到1080校正相位的过程。
-12. `12_experimental_shared_intensity_scale.png`：三张真实采集图使用同一个强度尺度。
+1. `01_origin_baseline.png`：未校正、带系统像差的 origin baseline。
+2. `02_computational_reconstruction.png`：NeuWS 计算重建的一致性参考。
+3. `03_optically_corrected_acquisition.png`：加载反相校正后重新采集的图像。
+4. `04_recovered_system_aberration_phase.png`：网络恢复的系统像差相位。
+5. `05_final_slm_correction_phase.png`：最终 SLM 校正相位。
+6. `06_training_loss.png`：训练损失与最佳状态。
+7. `07_origin_corrected_similarity.png`：origin/re 相似度，不是改善分数。
+8. `08_origin_corrected_similarity_overview.png`：origin/re 一致性总览。
+9. `09_slm_correction_derivation.png`：SLM 校正相位预览。
+10. `10_experimental_shared_intensity_scale.png`：两次真实采集使用同一个强度尺度。
 
-## 可直接用于PPT的结论
+## 当前可报告结果
 
-- Defocus（配准后）：PSNR {baseline['psnr_db']:.2f} dB，SSIM {baseline['ssim']:.3f}。
-- 光学校正（配准后）：PSNR {optical['psnr_db']:.2f} dB，SSIM {optical['ssim']:.3f}。
-- 计算重建（配准后）：PSNR {digital['psnr_db']:.2f} dB，SSIM {digital['ssim']:.3f}。
-- 光学校正相对Defocus提升：PSNR +{optical['psnr_db'] - baseline['psnr_db']:.2f} dB，SSIM +{optical['ssim'] - baseline['ssim']:.3f}。
-- 训练在第{training['num_epochs']}轮停止，并恢复第{best_epoch}轮的最佳平滑损失状态。
+- 选定比较：`{selected['mode']}`。{registration_text}
+- origin/re PSNR：{selected['psnr_db']:.2f} dB；SSIM：{selected['ssim']:.3f}；候选位移：{shift} 像素。
+- 上述 PSNR/SSIM 只表示 origin 与 re 的相似度，不能据此声称光学校正质量提高。
+- 光学质量指标状态：`{quality['status']}`。当前没有可靠 ROI、血管分割或 line profile，因此未计算 contrast、CNR、edge sharpness、line profile 或 FWHM。
+- 训练运行 {training.get('num_epochs', loss.size)} 轮；最佳平滑损失状态为第 {best_epoch} 轮。
 
-## 显示与指标说明
+## 显示说明
 
-- `01`–`04` 为了清楚展示空间结构，各自独立归一化到 `[0,1]`，不能用亮度直接比较绝对光声强度。
-- `12` 使用同一个实验强度上限，可用于比较 `origin / defocus / restored` 的相对亮度。
-- PSNR和SSIM均在独立归一化后进行平移配准计算，恢复位移为 `{optical['shift_yx_pixels']}` 像素。
+- `01`–`03` 为了显示空间结构而各自归一化，不能用其亮度比较绝对 PA 强度。
+- `10` 才使用 origin/re 共用强度尺度，但仍不能代替明确 ROI/profile 的光学质量指标。
+- origin 输入：`{origin_path.name}`；校正后输入：`{corrected_path.name}`。`clear_object.npy` 若出现，仅是兼容文件名，物理上仍代表 origin baseline。
 """
     (output_dir / "PPT素材说明.md").write_text(readme, encoding="utf-8")
     return output_dir
@@ -211,7 +273,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reconstruction-dir", required=True)
     parser.add_argument("--validation-dir", required=True)
     parser.add_argument("--correction-dir", required=True)
-    parser.add_argument("--evaluation-dir", required=True)
+    parser.add_argument(
+        "--evaluation-dir",
+        help="Deprecated compatibility option; no longer used by the exporter.",
+    )
     parser.add_argument("--output-dir", required=True)
     return parser
 

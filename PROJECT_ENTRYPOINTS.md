@@ -38,7 +38,7 @@ python workflows/real_experiment/run_pipeline.py --resume
 | 顺序 | 任务 | 正式入口 | 主要输出 |
 | --- | --- | --- | --- |
 | 1 | reference-guided 自适应 A-line 去相关并建集 | `tools/prepare_reference_guided_real_dataset.py` | excess-RMS、自动标定/QC、`SLM_rawN.mat` |
-| 2 | NeuWS 网络训练与像差恢复 | `recon_exp_data.py` | `vis/<scene>/final/final_aberration.mat`、`training_summary.json` |
+| 2 | NeuWS 网络训练与像差恢复 | `workflows/reconstruction/reconstruct_neuws.py` | `vis/<scene>/final/final_aberration.mat`、`training_summary.json` |
 | 3 | **立即导出硬件 SLM 校正** | `tools/export_slm_correction.py` | **`SLM_final_correction_1080.png`** / MAT / NPY |
 | 4 | Zernike 拟合与分析 | `tools/fit_recovered_zernike.py` | 系数、拟合相位、报告 |
 | 5 | 重新采集后的光学验证 | `tools/evaluate_optical_restoration.py` | 最终验证报告（独立后续步骤） |
@@ -87,9 +87,9 @@ workflow，会要求 CUDA；它不是通用默认入口。
 | reference-guided 整批 BIN 去相关并建集 | `tools/prepare_reference_guided_real_dataset.py` |
 | 单图添加指定像差 | `tools/apply_aberration.py` |
 | 生成仿真数据/SLM pattern | `tools/generate_neuws_data.py` |
-| 单纯 BIN → 多页 TIFF 或 MIP | `savetif/bin_to_tiff.py` |
-| 单 BIN 串扰去噪诊断 | `motor_crosstalk_denoise/run_denoise.py` |
-| NeuWS 网络训练/重建 | `recon_exp_data.py` |
+| 单纯 BIN → 多页 TIFF 或 MIP | `python -m dataio.bin_to_tiff` |
+| 单 BIN 串扰去噪诊断 | `denoising/motor_crosstalk/run_denoise.py` |
+| NeuWS 网络训练/重建 | `workflows/reconstruction/reconstruct_neuws.py` |
 | full-phase SLM 校正导出 | `tools/export_slm_correction.py` |
 | Zernike 拟合 | `tools/fit_recovered_zernike.py` |
 | 通用图像/相位评价 | `tools/evaluate_neuws.py` |
@@ -100,24 +100,24 @@ workflow，会要求 CUDA；它不是通用默认入口。
 配置好 `configs/real_experiment.json` 后，`workflows/real_experiment/run_pipeline.py` 无需
 额外参数即可运行，因此也可直接在 VS Code 中点击 Run Python File。
 
-`run_single_image.py` 是受支持的单图演示 wrapper：修改顶部输入图、输出目录和
+`workflows/static_simulation/single_image_demo.py` 是受支持的单图演示 wrapper：修改顶部输入图、输出目录和
 Zernike 系数后点击运行。其真正实现是 `tools/apply_aberration.py`。
 
-`run_dataset.py` **已 deprecated**。它仍可复现旧的一步式随机数据生成，但不包含
+`workflows/static_simulation/legacy_run_dataset.py` **已 deprecated**。它仍可复现旧的一步式随机数据生成，但不包含
 reference-guided 预处理、NeuWS 训练、SLM 校正导出和阶段恢复。
 
 ## 不直接运行的模块
 
 ```text
-networks.py                 NeuWS 网络
-dataset.py                  NeuWS MAT 数据加载与归一化
-optics.py                   光学与 Zernike 前向模型
-evaluation.py               图像/相位评价
-preprocessing/              正式 PA 预处理算法
+networks/neuws.py                         NeuWS 网络
+dataio/neuws_dataset.py                   NeuWS MAT 数据加载与归一化
+optics/propagation.py                     光学与 Zernike 前向模型
+analysis/evaluation.py                    图像/相位评价
+denoising/                                正式 PA 去噪算法与研究目录
 workflows/.../workflow.py   workflow 底层编排
 ```
 
-`noise_cause_review/` 保存噪声成因、PD、A-line、固定窗和模板 NCC 的研究溯源。
+`denoising/noise_review/` 保存噪声成因、PD、A-line、固定窗和模板 NCC 的研究溯源。
 处理新数据不要从其中的脚本开始。
 
 ## 分阶段命令示例
@@ -134,7 +134,7 @@ python tools/prepare_reference_guided_real_dataset.py \
   --backend cuda \
   --chunk-rows 600
 
-python recon_exp_data.py \
+python workflows/reconstruction/reconstruct_neuws.py \
   --static_phase \
   --data_dir /path/to/processed_dataset \
   --scene_name new_scene \

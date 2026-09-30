@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from aotools.functions import zernIndex
 
-from evaluation import evaluate_images, evaluate_phases
+from analysis.evaluation import evaluate_images, evaluate_phases
 from optics import (
     aperture_mask,
     default_aperture_height,
@@ -17,7 +17,7 @@ from optics import (
     zernike_basis_numpy,
     zernike_basis_torch,
 )
-from utils import compute_zernike_basis
+from optics.legacy import compute_zernike_basis
 
 
 class OpticsTests(unittest.TestCase):

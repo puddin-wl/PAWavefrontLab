@@ -20,8 +20,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from image_utils import write_unit_png  # noqa: E402
-from savetif.bin_to_tiff import convert_bin_to_mip_tiff  # noqa: E402
+from analysis.image_utils import write_unit_png  # noqa: E402
+from dataio.bin_to_tiff import convert_bin_to_mip_tiff  # noqa: E402
 
 
 SAMPLE_PATTERN = re.compile(r"^s(\d+)_.*_PA1\.bin$", re.IGNORECASE)

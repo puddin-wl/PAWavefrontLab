@@ -17,8 +17,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from aberration_config import DEFAULT_NUM_MODES, resolve_coefficients  # noqa: E402
-from image_utils import (  # noqa: E402
+from optics.aberrations import DEFAULT_NUM_MODES, resolve_coefficients  # noqa: E402
+from analysis.image_utils import (  # noqa: E402
     read_normalized_square,
     resolve_device,
     write_unit_png,

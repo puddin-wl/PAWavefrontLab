@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -20,9 +21,13 @@ import tqdm
 from torch.fft import fft2, fftshift
 from torch.utils.data import DataLoader
 
-from dataset import BatchDataset
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from dataio import BatchDataset
 from networks import MovingDiffuse, StaticDiffuseNet
-from utils import ang_to_unit
+from optics.legacy import ang_to_unit
 
 
 def _resolve_device(value: str) -> torch.device:

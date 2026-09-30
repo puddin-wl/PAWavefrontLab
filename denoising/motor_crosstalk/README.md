@@ -1,8 +1,8 @@
 # Motor Crosstalk Denoise
 
 这是 PA 图像中电机串扰噪点的正式工具目录。它把原先分散在
-`noise_cause_review/` 中的程序、固定模板、代表性结果和 PPT 素材集中到项目
-根目录下，便于直接找到和复用。
+`denoising/noise_review/` 中验证过的程序、固定模板、代表性结果和 PPT 素材集中到
+`denoising/motor_crosstalk/`，便于直接找到和复用。
 
 ## 两种使用方式
 
@@ -13,9 +13,9 @@ VS Code 中点击 **Run Python File**。也可以使用命令行：
 
 ```bash
 python \
-  motor_crosstalk_denoise/run_denoise.py \
+  denoising/motor_crosstalk/run_denoise.py \
   --input /path/to/600_600_512_PA1.bin \
-  --output-dir motor_crosstalk_denoise/runs/my_result
+  --output-dir denoising/motor_crosstalk/runs/my_result
 ```
 
 输入必须是包含每个像素完整 A-line 的 packed unsigned 12-bit PA BIN，默认形状
@@ -51,7 +51,7 @@ python tools/prepare_adaptive_real_dataset.py \
 
 ### 3. 固定模板流程（历史复现）
 
-固定模板算法实现在 `preprocessing/pa_denoising.py`，批量数据集入口为：
+固定模板算法实现在 `denoising/pa_denoising.py`，批量数据集入口为：
 
 ```bash
 python \

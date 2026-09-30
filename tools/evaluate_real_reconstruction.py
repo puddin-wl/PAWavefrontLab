@@ -17,8 +17,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from evaluation import evaluate_images  # noqa: E402
-from image_utils import write_unit_png, write_wrapped_phase_png  # noqa: E402
+from analysis.evaluation import evaluate_images  # noqa: E402
+from analysis.image_utils import write_unit_png, write_wrapped_phase_png  # noqa: E402
 
 
 def _minmax(image: np.ndarray, label: str) -> np.ndarray:
