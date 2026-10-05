@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import random
 import sys
 import time
 from pathlib import Path
@@ -26,7 +27,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from dataio import BatchDataset
-from networks import MovingDiffuse, StaticDiffuseNet
+from networks import DualMMES, MovingDiffuse, StaticDiffuseMMES, StaticDiffuseNet
 from optics.legacy import ang_to_unit
 
 
@@ -51,6 +52,84 @@ def _normalize_for_display(value: torch.Tensor) -> np.ndarray:
     if float(maximum - minimum) <= 1e-12:
         return np.zeros(value.shape, dtype=np.float32)
     return ((value - minimum) / (maximum - minimum)).numpy()
+
+
+def _parse_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Expected a boolean value, got {value!r}.")
+
+
+def _mmes_config(args: argparse.Namespace, branch: str) -> dict:
+    return {
+        "tau": args.mmes_tau,
+        "ranks": [
+            getattr(args, f"{branch}_mmes_rank1"),
+            getattr(args, f"{branch}_mmes_rank2"),
+            getattr(args, f"{branch}_mmes_rank3"),
+        ],
+        "noise_std": args.mmes_noise_std,
+        "seed": getattr(args, f"{branch}_mmes_seed"),
+        "init_scale": args.mmes_init_scale,
+        "chunk_size": args.mmes_chunk_size,
+        "checkpoint_chunks": args.mmes_checkpoint_chunks,
+    }
+
+
+def _optimization_loss_definition(model_mode: str) -> str:
+    if model_mode == "original":
+        return "measurement_mse"
+    if model_mode == "object_mmes":
+        return "measurement_mse + object_ae_weight * object_ae_mse"
+    return (
+        "measurement_mse + object_ae_weight * object_ae_mse + "
+        "aberration_ae_weight * aberration_ae_mse"
+    )
+
+
+@torch.no_grad()
+def _evaluate_losses(network, loader, device, model_mode, object_weight, aberration_weight):
+    was_training = network.training
+    network.eval()
+    totals = {
+        "measurement_mse": 0.0,
+        "object_ae_mse": 0.0,
+        "aberration_ae_mse": 0.0,
+        "total_loss": 0.0,
+    }
+    sample_count = 0
+    for x_batch, y_batch, indices in loader:
+        x_batch = x_batch.to(device, non_blocking=True)
+        y_batch = y_batch.to(device, non_blocking=True)
+        indices = indices.to(device)
+        current_time = _time_coordinate(indices, len(loader.dataset))
+        prediction = network(x_batch, current_time)[0].reshape_as(y_batch)
+        measurement = F.mse_loss(prediction, y_batch)
+        zero = measurement.new_zeros(())
+        object_ae = network.g_im.pop_ae_loss() if model_mode != "original" else zero
+        aberration_ae = network.g_g.pop_ae_loss() if model_mode == "dual_mmes" else zero
+        total = measurement
+        if model_mode != "original":
+            total = total + object_weight * object_ae
+        if model_mode == "dual_mmes":
+            total = total + aberration_weight * aberration_ae
+        count = int(y_batch.shape[0])
+        sample_count += count
+        for name, value in (
+            ("measurement_mse", measurement),
+            ("object_ae_mse", object_ae),
+            ("aberration_ae_mse", aberration_ae),
+            ("total_loss", total),
+        ):
+            totals[name] += float(value) * count
+    if was_training:
+        network.train()
+    return {name: value / sample_count for name, value in totals.items()}
 
 
 def _save_progress(
@@ -135,6 +214,35 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dynamic_scene", action="store_true")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--seed", default=0, type=int)
+    parser.add_argument(
+        "--model_mode",
+        choices=("original", "object_mmes", "dual_mmes"),
+        default="original",
+        help="Neural representation backend; original preserves the historical path.",
+    )
+    parser.add_argument("--object_ae_weight", default=1.0, type=float)
+    parser.add_argument("--aberration_ae_weight", default=1.0, type=float)
+    parser.add_argument("--mmes_tau", default=4, type=int)
+    parser.add_argument("--mmes_noise_std", default=0.01, type=float)
+    parser.add_argument("--mmes_chunk_size", default=4096, type=int)
+    parser.add_argument(
+        "--mmes_checkpoint_chunks",
+        default=True,
+        type=_parse_bool,
+        nargs="?",
+        const=True,
+        help="Use activation checkpointing for MMES chunks (true/false).",
+    )
+    parser.add_argument("--mmes_init_scale", default=0.1, type=float)
+    parser.add_argument("--object_mmes_rank1", default=512, type=int)
+    parser.add_argument("--object_mmes_rank2", default=16, type=int)
+    parser.add_argument("--object_mmes_rank3", default=512, type=int)
+    parser.add_argument("--aberration_mmes_rank1", default=512, type=int)
+    parser.add_argument("--aberration_mmes_rank2", default=16, type=int)
+    parser.add_argument("--aberration_mmes_rank3", default=512, type=int)
+    parser.add_argument("--object_mmes_seed", default=0, type=int)
+    parser.add_argument("--aberration_mmes_seed", default=1, type=int)
+    parser.add_argument("--amplitude_offset", default=1.0, type=float)
     return parser
 
 
@@ -146,6 +254,14 @@ def main() -> None:
         raise ValueError("Early-stopping patience and warmup must be non-negative.")
     if args.early_stop_window <= 0 or args.early_stop_min_delta < 0:
         raise ValueError("Early-stopping window must be positive and min_delta non-negative.")
+    if args.model_mode != "original":
+        if args.dynamic_scene:
+            raise ValueError("MMES modes currently model a static object; omit --dynamic_scene.")
+        active_weights = [args.object_ae_weight]
+        if args.model_mode == "dual_mmes":
+            active_weights.append(args.aberration_ae_weight)
+        if any(not np.isfinite(weight) or weight < 0 for weight in active_weights):
+            raise ValueError("Active AE weights must be finite and non-negative.")
     root_dir = Path(args.root_dir).expanduser().resolve()
     requested_data_dir = Path(args.data_dir).expanduser()
     data_dir = requested_data_dir.resolve() if requested_data_dir.is_absolute() else root_dir / requested_data_dir
@@ -159,6 +275,7 @@ def main() -> None:
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
+    random.seed(args.seed)
     torch.backends.cudnn.benchmark = False
     device = _resolve_device(args.device)
     if device.type == "cuda":
@@ -189,16 +306,48 @@ def main() -> None:
         pin_memory=device.type == "cuda",
         generator=loader_generator,
     )
-    network_class = MovingDiffuse if args.dynamic_scene else StaticDiffuseNet
-    network = network_class(
-        width=width,
-        PSF_size=width,
-        use_FFT=True,
-        bsize=args.batch_size,
-        phs_layers=args.phs_layers,
-        static_phase=args.static_phase,
-        zernike_features=args.zernike_features,
-    ).to(device)
+    object_mmes_config = _mmes_config(args, "object")
+    aberration_mmes_config = _mmes_config(args, "aberration")
+    network_arguments = {
+        "width": width,
+        "PSF_size": width,
+        "use_FFT": True,
+        "bsize": args.batch_size,
+        "phs_layers": args.phs_layers,
+        "static_phase": args.static_phase,
+        "zernike_features": args.zernike_features,
+    }
+    if args.model_mode == "original":
+        network_class = MovingDiffuse if args.dynamic_scene else StaticDiffuseNet
+        network = network_class(**network_arguments)
+    elif args.model_mode == "object_mmes":
+        network = StaticDiffuseMMES(
+            **network_arguments, mmes_kwargs=object_mmes_config
+        )
+    else:
+        network = DualMMES(
+            **network_arguments,
+            num_frames=len(dataset),
+            object_kwargs=object_mmes_config,
+            aberration_kwargs=aberration_mmes_config,
+            amplitude_offset=args.amplitude_offset,
+        )
+    network = network.to(device)
+    model_config = {
+        "model_mode": args.model_mode,
+        "width": width,
+        "psf_size": width,
+        "num_frames": len(dataset),
+        "batch_size": args.batch_size,
+        "phs_layers": args.phs_layers,
+        "static_phase": args.static_phase,
+        "dynamic_scene": args.dynamic_scene,
+        "zernike_features": args.zernike_features,
+        "use_fft": True,
+        "object_mmes_config": object_mmes_config,
+        "aberration_mmes_config": aberration_mmes_config,
+        "amplitude_offset": args.amplitude_offset,
+    }
     image_optimizer = torch.optim.Adam(network.g_im.parameters(), lr=args.init_lr)
     phase_optimizer = torch.optim.Adam(network.g_g.parameters(), lr=args.init_lr)
     image_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -210,6 +359,9 @@ def main() -> None:
 
     total_iteration = 0
     loss_history = []
+    object_ae_loss_history = []
+    aberration_ae_loss_history = []
+    total_loss_history = []
     best_smoothed_loss = float("inf")
     patience_reference_loss = float("inf")
     best_epoch = 0
@@ -221,6 +373,9 @@ def main() -> None:
     start_time = time.time()
     for epoch in progress:
         epoch_losses = []
+        epoch_object_ae_losses = []
+        epoch_aberration_ae_losses = []
+        epoch_total_losses = []
         for iteration, (x_batch, y_batch, indices) in enumerate(loader):
             x_batch = x_batch.to(device, non_blocking=True)
             y_batch = y_batch.to(device, non_blocking=True)
@@ -231,11 +386,28 @@ def main() -> None:
             y, kernel, sim_g, sim_phs, image_estimate = network(x_batch, current_time)
             y = y.reshape_as(y_batch)
             mse_loss = F.mse_loss(y, y_batch)
-            mse_loss.backward()
+            zero = mse_loss.new_zeros(())
+            object_ae_loss = (
+                network.g_im.pop_ae_loss() if args.model_mode != "original" else zero
+            )
+            aberration_ae_loss = (
+                network.g_g.pop_ae_loss() if args.model_mode == "dual_mmes" else zero
+            )
+            total_loss = mse_loss
+            if args.model_mode != "original":
+                total_loss = total_loss + args.object_ae_weight * object_ae_loss
+            if args.model_mode == "dual_mmes":
+                total_loss = total_loss + args.aberration_ae_weight * aberration_ae_loss
+            total_loss.backward()
             phase_optimizer.step()
             image_optimizer.step()
             epoch_losses.append(float(mse_loss.detach()))
-            progress.set_postfix(MSE=f"{epoch_losses[-1]:.4e}")
+            epoch_object_ae_losses.append(float(object_ae_loss.detach()))
+            epoch_aberration_ae_losses.append(float(aberration_ae_loss.detach()))
+            epoch_total_losses.append(float(total_loss.detach()))
+            progress.set_postfix(
+                MSE=f"{epoch_losses[-1]:.4e}", total=f"{epoch_total_losses[-1]:.4e}"
+            )
 
             if args.vis_freq > 0 and total_iteration % args.vis_freq == 0:
                 _save_progress(
@@ -256,6 +428,9 @@ def main() -> None:
                 )
             total_iteration += 1
         loss_history.append(float(np.mean(epoch_losses)))
+        object_ae_loss_history.append(float(np.mean(epoch_object_ae_losses)))
+        aberration_ae_loss_history.append(float(np.mean(epoch_aberration_ae_losses)))
+        total_loss_history.append(float(np.mean(epoch_total_losses)))
         image_scheduler.step()
         phase_scheduler.step()
         smoothed_loss = None
@@ -312,7 +487,10 @@ def main() -> None:
                     early_stop_status += ", patience=warmup"
             print(
                 f"Epoch {epoch + 1}/{args.num_epochs}: "
-                f"mean MSE={loss_history[-1]:.6e}{early_stop_status}, "
+                f"measurement={loss_history[-1]:.6e}, "
+                f"object_ae={object_ae_loss_history[-1]:.6e}, "
+                f"aberration_ae={aberration_ae_loss_history[-1]:.6e}, "
+                f"total={total_loss_history[-1]:.6e}{early_stop_status}, "
                 f"elapsed={elapsed_so_far:.1f}s",
                 flush=True,
             )
@@ -337,34 +515,81 @@ def main() -> None:
         network.g_g.load_state_dict(best_phase_state)
         print(f"Restored the best smoothed-loss state from epoch {best_epoch}.")
 
+    evaluation_loader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=device.type == "cuda",
+    )
+    final_losses = _evaluate_losses(
+        network,
+        evaluation_loader,
+        device,
+        args.model_mode,
+        args.object_ae_weight,
+        args.aberration_ae_weight,
+    )
+
     output_errors = []
     output_aberrations = []
     output_images = []
     output_images_network_units = []
-    final_field = None
-    final_phase = None
+    final_components = None
+    cached_components = None
     network.eval()
     with torch.no_grad():
         for frame in range(len(dataset)):
             current_time = _time_coordinate(
                 torch.tensor([frame], dtype=torch.long, device=device), len(dataset)
             )
-            image_estimate, sim_g, sim_phs = network.get_estimates(current_time)
+            if cached_components is None:
+                if args.model_mode == "dual_mmes":
+                    components = network.get_aberration_components(current_time)
+                else:
+                    image_estimate, sim_g, sim_phs = network.get_estimates(current_time)
+                    components = (image_estimate, sim_g, sim_phs, None, None)
+                if args.static_phase and not args.dynamic_scene:
+                    cached_components = components
+            else:
+                components = cached_components
+            image_estimate, sim_g, sim_phs, amplitude_parameter, amplitude_residual = components
             image_network_np = torch.clamp(image_estimate, min=0).squeeze().cpu().numpy()
             image_np = np.clip(image_network_np, 0, 1)
             output_images_network_units.append(image_network_np)
             output_images.append(image_np)
-            # Materialize the phase first, then derive the complex field from it.
-            # Keeping two independent NumPy views of temporary CUDA outputs can
-            # leave the saved field inconsistent with the saved phase after the
-            # allocator reuses the temporary host storage.
             phase_np = sim_phs.squeeze().cpu().numpy().copy()
-            field_np = np.exp(1j * phase_np).astype(np.complex64)
-            output_errors.append(np.uint8(np.clip(ang_to_unit(np.angle(field_np)), 0, 1) * 255))
+            if args.model_mode == "dual_mmes":
+                field_np = sim_g.squeeze().cpu().numpy().copy().astype(np.complex64)
+                amplitude_parameter_np = amplitude_parameter.squeeze().cpu().numpy().copy()
+                amplitude_residual_np = amplitude_residual.squeeze().cpu().numpy().copy()
+            else:
+                # Preserve the historical output contract: field is unit-amplitude
+                # exp(i*phase), even though the internal original MLP also predicts
+                # a signed amplitude used by the optical forward.
+                field_np = np.exp(1j * phase_np).astype(np.complex64)
+                amplitude_parameter_np = np.ones_like(phase_np, dtype=np.float32)
+                amplitude_residual_np = np.zeros_like(phase_np, dtype=np.float32)
+            complex_phase_np = np.angle(field_np).astype(np.float32)
+            field_amplitude_np = np.abs(field_np).astype(np.float32)
+            output_errors.append(
+                np.uint8(np.clip(ang_to_unit(phase_np), 0, 1) * 255)
+            )
             output_aberrations.append(np.uint8(_normalize_for_display(sim_phs.squeeze()) * 255))
-            final_field, final_phase = field_np, phase_np
+            final_components = {
+                "field": field_np,
+                "phase": phase_np,
+                "phase_parameter": phase_np,
+                "complex_phase": complex_phase_np,
+                "amplitude_parameter": amplitude_parameter_np,
+                "amplitude_residual": amplitude_residual_np,
+                "field_amplitude": field_amplitude_np,
+            }
             if args.save_per_frame and not args.static_phase:
-                sio.savemat(per_frame_dir / f"sim_phase_{frame}.mat", {"angle": phase_np})
+                sio.savemat(
+                    per_frame_dir / f"sim_phase_{frame}.mat",
+                    {"angle": phase_np, **final_components},
+                )
 
     if args.dynamic_scene:
         imageio.mimsave(
@@ -381,7 +606,7 @@ def main() -> None:
     )
     sio.savemat(
         final_dir / "final_aberration.mat",
-        {"field": final_field, "phase": final_phase},
+        final_components,
     )
 
     if args.static_phase:
@@ -400,6 +625,14 @@ def main() -> None:
     summary = {
         "data_dir": str(data_dir),
         "device": str(device),
+        "model_mode": args.model_mode,
+        "optimization_loss_definition": _optimization_loss_definition(args.model_mode),
+        "early_stopping_metric": "measurement_mse",
+        "object_ae_weight": args.object_ae_weight,
+        "aberration_ae_weight": args.aberration_ae_weight,
+        "amplitude_offset": args.amplitude_offset,
+        "object_mmes_config": object_mmes_config,
+        "aberration_mmes_config": aberration_mmes_config,
         "width": width,
         "num_frames": len(dataset),
         "num_epochs": len(loss_history),
@@ -411,6 +644,20 @@ def main() -> None:
         "measurement_normalization_max": dataset.max_intensity,
         "measurement_normalization": dataset.normalization,
         "loss_history": loss_history,
+        "measurement_mse_history": loss_history,
+        "object_ae_mse_history": object_ae_loss_history,
+        "aberration_ae_mse_history": aberration_ae_loss_history,
+        "total_loss_history": total_loss_history,
+        "final_measurement_mse": final_losses["measurement_mse"],
+        "final_object_ae_mse": final_losses["object_ae_mse"],
+        "final_aberration_ae_mse": final_losses["aberration_ae_mse"],
+        "final_total_loss": final_losses["total_loss"],
+        "final_aberration_phase_semantics": (
+            "phase is the MMES phase_parameter; complex_phase=angle(field) may differ by pi "
+            "where signed amplitude_parameter is negative"
+            if args.model_mode == "dual_mmes"
+            else "phase and field preserve the historical unit-amplitude exp(1j*phase) output"
+        ),
         "elapsed_seconds": elapsed,
         "peak_cuda_memory_bytes": (
             int(torch.cuda.max_memory_allocated(device)) if device.type == "cuda" else None
@@ -437,6 +684,45 @@ def main() -> None:
     (final_dir / "training_summary.json").write_text(
         json.dumps(summary, indent=2) + "\n", encoding="utf-8"
     )
+    numpy_state = np.random.get_state()
+    checkpoint_data = {
+        "schema_version": 1,
+        "model_state_dict": network.state_dict(),
+        "image_optimizer_state_dict": image_optimizer.state_dict(),
+        "phase_optimizer_state_dict": phase_optimizer.state_dict(),
+        "image_scheduler_state_dict": image_scheduler.state_dict(),
+        "phase_scheduler_state_dict": phase_scheduler.state_dict(),
+        "model_mode": args.model_mode,
+        "model_config": model_config,
+        "epoch": len(loss_history),
+        "loss_histories": {
+            "measurement_mse": loss_history,
+            "object_ae_mse": object_ae_loss_history,
+            "aberration_ae_mse": aberration_ae_loss_history,
+            "total_loss": total_loss_history,
+        },
+        "final_losses": final_losses,
+        "measurement_normalization": {
+            "method": dataset.normalization,
+            "maximum": dataset.max_intensity,
+        },
+        "random_state": {
+            "python": random.getstate(),
+            "numpy": {
+                "generator": numpy_state[0],
+                "state": numpy_state[1].tolist(),
+                "position": numpy_state[2],
+                "has_gauss": numpy_state[3],
+                "cached_gaussian": numpy_state[4],
+            },
+            "torch": torch.get_rng_state(),
+            "torch_cuda": torch.cuda.get_rng_state_all() if device.type == "cuda" else None,
+        },
+        "best_state_restored": bool(
+            args.early_stop_patience > 0 and best_image_state is not None
+        ),
+    }
+    torch.save(checkpoint_data, final_dir / "model_final.pt")
     print("Training concludes.")
 
 

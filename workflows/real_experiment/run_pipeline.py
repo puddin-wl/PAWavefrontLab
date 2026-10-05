@@ -470,6 +470,23 @@ def _build_training_command(config: dict[str, Any], dataset_dir: Path, scene_nam
         "zernike_features": "--zernike_features",
         "device": "--device",
         "seed": "--seed",
+        "model_mode": "--model_mode",
+        "object_ae_weight": "--object_ae_weight",
+        "aberration_ae_weight": "--aberration_ae_weight",
+        "mmes_tau": "--mmes_tau",
+        "mmes_noise_std": "--mmes_noise_std",
+        "mmes_chunk_size": "--mmes_chunk_size",
+        "mmes_checkpoint_chunks": "--mmes_checkpoint_chunks",
+        "mmes_init_scale": "--mmes_init_scale",
+        "object_mmes_rank1": "--object_mmes_rank1",
+        "object_mmes_rank2": "--object_mmes_rank2",
+        "object_mmes_rank3": "--object_mmes_rank3",
+        "aberration_mmes_rank1": "--aberration_mmes_rank1",
+        "aberration_mmes_rank2": "--aberration_mmes_rank2",
+        "aberration_mmes_rank3": "--aberration_mmes_rank3",
+        "object_mmes_seed": "--object_mmes_seed",
+        "aberration_mmes_seed": "--aberration_mmes_seed",
+        "amplitude_offset": "--amplitude_offset",
     }
     for key, flag in option_map.items():
         _append_option(command, flag, section.get(key))
