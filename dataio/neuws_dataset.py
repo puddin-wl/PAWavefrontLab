@@ -55,6 +55,8 @@ class BatchDataset(torch.utils.data.Dataset):
         max_intensity: float = 0,
         zero_freq: int = -1,
         normalization: str = "shared-max",
+        normalization_low_percentile: float = 1.0,
+        normalization_high_percentile: float = 99.99,
     ):
         self.data_dir = Path(data_dir).expanduser().resolve()
         if not self.data_dir.is_dir():
@@ -63,10 +65,26 @@ class BatchDataset(torch.utils.data.Dataset):
         self.slm_prefix = slm_prefix
         self.zero_freq = int(zero_freq)
         self.normalization = str(normalization)
-        if self.normalization not in {"shared-max", "per-frame-minmax"}:
+        if self.normalization not in {
+            "shared-max",
+            "shared-percentile",
+            "per-frame-minmax",
+        }:
             raise ValueError(
-                "normalization must be 'shared-max' or 'per-frame-minmax', "
+                "normalization must be 'shared-max', 'shared-percentile', or "
+                "'per-frame-minmax', "
                 f"got {self.normalization!r}."
+            )
+        self.normalization_low_percentile = float(normalization_low_percentile)
+        self.normalization_high_percentile = float(normalization_high_percentile)
+        if not (
+            0.0 <= self.normalization_low_percentile
+            < self.normalization_high_percentile
+            <= 100.0
+        ):
+            raise ValueError(
+                "Shared-percentile bounds must satisfy "
+                "0 <= low < high <= 100."
             )
         self.manifest = self._load_manifest()
         self.phase_sign = int(self.manifest.get("phase_sign", PAPER_PHASE_SIGN))
@@ -112,6 +130,7 @@ class BatchDataset(torch.utils.data.Dataset):
         self.width = 0
         self.aperture_height = 0
         observed_max = 0.0
+        percentile_values = []
         for position, (image_path, phase_path) in enumerate(
             zip(self.image_files, self.phase_files), start=1
         ):
@@ -131,6 +150,8 @@ class BatchDataset(torch.utils.data.Dataset):
                     f"{(self.aperture_height, self.width)}."
                 )
             observed_max = max(observed_max, float(image.max()))
+            if self.normalization == "shared-percentile":
+                percentile_values.append(np.asarray(image, dtype=np.float32).reshape(-1))
 
         manifest_size = self.manifest.get("size")
         if manifest_size is not None and int(manifest_size) != self.width:
@@ -144,18 +165,38 @@ class BatchDataset(torch.utils.data.Dataset):
                 f"{self.aperture_height}."
             )
 
-        manifest_max = float(self.manifest.get("measurement_max", 0) or 0)
-        requested_max = float(max_intensity)
-        self.max_intensity = requested_max if requested_max > 0 else manifest_max
-        if self.max_intensity <= 0:
-            self.max_intensity = observed_max
-        if not np.isfinite(self.max_intensity) or self.max_intensity <= 0:
-            raise ValueError("Measurement normalization maximum must be finite and positive.")
-        tolerance = max(1e-6, abs(self.max_intensity) * 1e-6)
-        if observed_max > self.max_intensity + tolerance:
-            raise ValueError(
-                f"Normalization maximum {self.max_intensity} is below observed value {observed_max}."
+        self.normalization_offset = 0.0
+        if self.normalization == "shared-percentile":
+            combined = np.concatenate(percentile_values)
+            bounds = np.percentile(
+                combined,
+                [
+                    self.normalization_low_percentile,
+                    self.normalization_high_percentile,
+                ],
             )
+            self.normalization_offset = float(bounds[0])
+            self.max_intensity = float(bounds[1])
+            del combined, percentile_values
+            if (
+                not np.isfinite(self.normalization_offset)
+                or not np.isfinite(self.max_intensity)
+                or self.max_intensity <= self.normalization_offset
+            ):
+                raise ValueError("Shared-percentile normalization has no finite range.")
+        else:
+            manifest_max = float(self.manifest.get("measurement_max", 0) or 0)
+            requested_max = float(max_intensity)
+            self.max_intensity = requested_max if requested_max > 0 else manifest_max
+            if self.max_intensity <= 0:
+                self.max_intensity = observed_max
+            if not np.isfinite(self.max_intensity) or self.max_intensity <= 0:
+                raise ValueError("Measurement normalization maximum must be finite and positive.")
+            tolerance = max(1e-6, abs(self.max_intensity) * 1e-6)
+            if observed_max > self.max_intensity + tolerance:
+                raise ValueError(
+                    f"Normalization maximum {self.max_intensity} is below observed value {observed_max}."
+                )
 
         self.a_slm = aperture_mask(self.width, self.aperture_height)
         self.num = len(self.indices)
@@ -232,6 +273,13 @@ class BatchDataset(torch.utils.data.Dataset):
                     f"Frame {position} has no intensity range for per-frame min-max normalization."
                 )
             normalized = (image - frame_minimum) / (frame_maximum - frame_minimum)
+        elif self.normalization == "shared-percentile":
+            normalized = np.clip(
+                (image - self.normalization_offset)
+                / (self.max_intensity - self.normalization_offset),
+                0.0,
+                1.0,
+            )
         else:
             normalized = image / self.max_intensity
         y_train = torch.from_numpy(np.asarray(normalized, dtype=np.float32))

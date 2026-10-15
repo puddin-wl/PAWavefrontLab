@@ -157,6 +157,9 @@ def test_pipeline_forwards_mmes_training_configuration(tmp_path):
     config = {
         "training": {
             "model_mode": "dual_mmes",
+            "normalization": "shared-percentile",
+            "normalization_low_percentile": 1.0,
+            "normalization_high_percentile": 99.99,
             "object_ae_weight": 0.5,
             "aberration_ae_weight": 0.25,
             "mmes_tau": 3,
@@ -166,6 +169,9 @@ def test_pipeline_forwards_mmes_training_configuration(tmp_path):
     }
     command = _build_training_command(config, dataset_dir, "scene")
     assert command[command.index("--model_mode") + 1] == "dual_mmes"
+    assert command[command.index("--normalization") + 1] == "shared-percentile"
+    assert command[command.index("--normalization_low_percentile") + 1] == "1.0"
+    assert command[command.index("--normalization_high_percentile") + 1] == "99.99"
     assert command[command.index("--object_ae_weight") + 1] == "0.5"
     assert command[command.index("--mmes_checkpoint_chunks") + 1] == "False"
     assert command[command.index("--amplitude_offset") + 1] == "0.75"

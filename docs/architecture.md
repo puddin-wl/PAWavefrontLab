@@ -140,7 +140,8 @@ PSNR、SSIM、位移，以及去除指定低阶 Zernike 后的 wrapped phase err
 
 - `pa_denoising.py`：CPU 参考实现及模板匹配/投影算法。
 - `pa_denoising_gpu.py`：与 CPU 数学行为一致的 CuPy 加速实现。
-- `pa_adaptive_denoising.py` 与 `pa_reference_guided_*.py`：实验自适应和参考引导流程。
+- `pa_adaptive_denoising.py` 与 `pa_reference_guided_*.py`：仅保留用于历史实验复现，
+  不再由真实实验正式 pipeline 调用。
 - `motor_crosstalk/`：可直接运行的电机串扰工具、固定模板和汇报素材。
 - `noise_review/`：噪声成因与算法形成过程的研究溯源，不作为新实验入口。
 

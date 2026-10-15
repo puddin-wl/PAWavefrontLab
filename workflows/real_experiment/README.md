@@ -2,7 +2,7 @@
 
 `run_pipeline.py` 是真实 PA 实验的统一总控入口。它不重复实现算法，而是按顺序启动现有独立程序：
 
-1. `tools/prepare_reference_guided_real_dataset.py`：reference-guided A-line 去相关、excess-RMS 与 NeuWS 建集；
+1. `tools/prepare_decorrelated_real_dataset.py`：固定模板 A-line 去相关、全深度 MIP 与 NeuWS 建集；
 2. `workflows/reconstruction/reconstruct_neuws.py`：NeuWS 网络训练与系统像差恢复；
 3. `tools/export_slm_correction.py`：**训练完成后立即**导出可加载的 1080×1080 SLM 校正相位；
 4. `tools/fit_recovered_zernike.py`：随后进行 Noll 1–28 Zernike 拟合与分析。
@@ -37,8 +37,12 @@ python workflows/real_experiment/run_pipeline.py
 python workflows/real_experiment/run_pipeline.py --resume
 ```
 
+第一阶段只支持 `fixed-template-decorrelation-full-depth-mip`。固定 361 点电机串扰模板
+在完整深度 A-line 上匹配并扣除，不进行自动信号深度窗标定。配置中出现旧的
+`teacher_*`、`grid_size` 或 `final_correlation_threshold` 会立即报错，不会被静默忽略。
+
 `--resume` 对预处理阶段不仅检查输出完整性，还会校验原始 BIN、origin、SLM MAT、
-teacher template 和预处理参数的输入指纹。没有指纹的历史数据不会自动认领；只有人工
+固定噪声模板和预处理参数的输入指纹。没有指纹的历史数据不会自动认领；只有人工
 确认来源后，才可首次联用 `--resume --adopt-existing-preprocess`。其余阶段根据关键输出
 跳过已经完成的步骤。
 

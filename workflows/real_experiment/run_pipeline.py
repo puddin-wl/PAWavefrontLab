@@ -3,7 +3,7 @@
 
 This is an orchestration layer only. Each stage remains an independent program:
 
-1. reference-guided CUDA/CPU denoising and NeuWS dataset preparation;
+1. fixed-template crosstalk decorrelation, full-depth MIP and dataset preparation;
 2. NeuWS training/reconstruction;
 3. immediate full-phase SLM correction export (experiment-critical output);
 4. Zernike fitting/analysis (runs after the hardware correction is available).
@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import shlex
 import subprocess
 import sys
@@ -29,7 +30,18 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = PROJECT_ROOT / "configs" / "real_experiment.json"
 DEFAULT_MEASUREMENT_GLOB = "s*_600_600_512_PA1.bin"
-DEFAULT_TEACHER_TEMPLATE = (
+FIXED_TEMPLATE_METHOD = "fixed-template-decorrelation-full-depth-mip"
+UNSUPPORTED_AUTOMATIC_DEPTH_KEYS = frozenset(
+    {
+        "grid_size",
+        "seed",
+        "teacher_template",
+        "teacher_correlation_threshold",
+        "teacher_refit_threshold",
+        "final_correlation_threshold",
+    }
+)
+DEFAULT_NOISE_TEMPLATE = (
     PROJECT_ROOT
     / "denoising"
     / "motor_crosstalk"
@@ -102,30 +114,58 @@ def _measurement_index(path: Path) -> int:
 
 def _preprocess_effective_config(config: dict[str, Any]) -> dict[str, Any]:
     section = config.get("preprocess", {})
-    return {
+    if not isinstance(section, dict):
+        raise ValueError("preprocess 必须是 JSON object。")
+
+    method = str(section.get("method", FIXED_TEMPLATE_METHOD))
+    if method != FIXED_TEMPLATE_METHOD:
+        raise ValueError(
+            f"preprocess.method 只支持 {FIXED_TEMPLATE_METHOD!r}；实际为 {method!r}。\n"
+            "自动寻找深度/reference-guided 预处理已从正式 pipeline 停用。"
+        )
+    unsupported = sorted(UNSUPPORTED_AUTOMATIC_DEPTH_KEYS.intersection(section))
+    if unsupported:
+        raise ValueError(
+            "preprocess 中发现已停用的自动深度/reference-guided 参数："
+            + ", ".join(unsupported)
+            + "。请删除这些字段；正式 pipeline 只使用固定串扰模板去相关。"
+        )
+
+    effective = {
+        "method": FIXED_TEMPLATE_METHOD,
         "backend": str(section.get("backend", "cuda")),
-        "chunk_rows": int(section.get("chunk_rows", 600)),
-        "grid_size": int(section.get("grid_size", 20)),
-        "seed": int(section.get("seed", 0)),
-        "measurement_glob": str(section.get("measurement_glob", DEFAULT_MEASUREMENT_GLOB)),
-        "teacher_template": str(
-            _resolve_path(section.get("teacher_template", DEFAULT_TEACHER_TEMPLATE))
+        "chunk_rows": int(section.get("chunk_rows", 10)),
+        "measurement_glob": str(
+            section.get("measurement_glob", DEFAULT_MEASUREMENT_GLOB)
         ),
-        "teacher_correlation_threshold": float(
-            section.get("teacher_correlation_threshold", 0.70)
+        "noise_template": str(
+            _resolve_path(section.get("noise_template", DEFAULT_NOISE_TEMPLATE))
         ),
-        "teacher_refit_threshold": float(section.get("teacher_refit_threshold", 0.80)),
-        "final_correlation_threshold": float(
-            section.get("final_correlation_threshold", 0.70)
-        ),
+        "baseline_adc": float(section.get("baseline_adc", 2048.0)),
+        "correlation_threshold": float(section.get("correlation_threshold", 0.70)),
         "minimum_fitted_peak_adc": float(section.get("minimum_fitted_peak_adc", 80.0)),
     }
+    if effective["backend"] not in {"cpu", "cuda"}:
+        raise ValueError("preprocess.backend 只支持 'cpu' 或 'cuda'。")
+    if effective["chunk_rows"] <= 0:
+        raise ValueError("preprocess.chunk_rows 必须大于 0。")
+    if not effective["measurement_glob"]:
+        raise ValueError("preprocess.measurement_glob 不能为空。")
+    if not math.isfinite(effective["baseline_adc"]):
+        raise ValueError("preprocess.baseline_adc 必须是有限数值。")
+    if not 0.0 < effective["correlation_threshold"] <= 1.0:
+        raise ValueError("preprocess.correlation_threshold 必须在 (0, 1]。")
+    if (
+        not math.isfinite(effective["minimum_fitted_peak_adc"])
+        or effective["minimum_fitted_peak_adc"] < 0.0
+    ):
+        raise ValueError("preprocess.minimum_fitted_peak_adc 必须是非负有限数值。")
+    return effective
 
 
 def _build_preprocess_fingerprint(
     config: dict[str, Any],
     *,
-    scene_name: str,
     dataset_dir: Path,
 ) -> dict[str, Any]:
     source_dir = _resolve_path(_required(config, "source_dir"))
@@ -158,22 +198,21 @@ def _build_preprocess_fingerprint(
             raise FileNotFoundError(f"相位文件不存在：{phase_path}")
         phase_files.append(phase_path)
 
-    teacher = Path(effective["teacher_template"])
+    noise_template = Path(effective["noise_template"])
     payload = {
-        "schema_version": 1,
-        "scene_name": scene_name,
+        "schema_version": 3,
         "dataset_output_dir": str(dataset_dir.resolve()),
         "source_dir": str(source_dir),
         "origin_source": _file_identity(origin),
         "measurement_files": [_file_identity(path) for path in measurements],
         "phase_dir": str(phase_dir),
         "phase_files": [_file_identity(path) for path in phase_files],
-        "teacher_template": _file_identity(teacher),
+        "noise_template": _file_identity(noise_template),
         "preprocess": effective,
     }
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return {
-        "schema_version": 1,
+        "schema_version": 3,
         "digest": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
         "inputs": payload,
     }
@@ -198,6 +237,29 @@ def _write_preprocess_fingerprint(path: Path, fingerprint: dict[str, Any]) -> No
     payload = dict(fingerprint)
     payload["written_at"] = _utc_now()
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def _preprocess_inputs_equivalent(
+    stored: dict[str, Any], current: dict[str, Any]
+) -> bool:
+    """Compare only inputs that can change the prepared numeric dataset.
+
+    Schema v2 included the training ``scene_name`` even though it does not affect
+    BIN decoding, fixed-template subtraction, MIP values, or copied SLM phases.
+    Ignoring that label allows one verified prepared dataset to be reused by
+    multiple training configurations without weakening file/template checks.
+    """
+
+    comparable: list[dict[str, Any]] = []
+    for fingerprint in (stored, current):
+        inputs = fingerprint.get("inputs")
+        if not isinstance(inputs, dict):
+            return False
+        normalized = dict(inputs)
+        normalized.pop("schema_version", None)
+        normalized.pop("scene_name", None)
+        comparable.append(normalized)
+    return comparable[0] == comparable[1]
 
 
 def _mark_preprocess_skipped(
@@ -254,14 +316,20 @@ def _check_preprocess_resume(
         stored = _read_json(fingerprint_path)
         stored_digest = stored.get("digest")
         if stored_digest != fingerprint["digest"]:
-            raise RuntimeError(
-                "发现完整的旧预处理结果，但输入指纹与当前配置不一致，拒绝 --resume。\n"
-                f"旧指纹：{stored_digest}\n"
-                f"当前指纹：{fingerprint['digest']}\n"
-                f"指纹文件：{fingerprint_path}\n"
-                "说明当前 source_dir / origin_source / phase_dir / teacher / 预处理参数中的至少一项已变化。\n"
-                "请为新实验使用新的 scene_name 和 dataset_output_dir；若要重跑同一目录，请先人工确认并清理旧输出。"
-            )
+            if not _preprocess_inputs_equivalent(stored, fingerprint):
+                raise RuntimeError(
+                    "发现完整的旧预处理结果，但输入指纹与当前配置不一致，拒绝 --resume。\n"
+                    f"旧指纹：{stored_digest}\n"
+                    f"当前指纹：{fingerprint['digest']}\n"
+                    f"指纹文件：{fingerprint_path}\n"
+                    "说明当前 source_dir / origin_source / phase_dir / 固定噪声模板 / 预处理参数中的至少一项已变化。\n"
+                    "请为新实验使用新的 dataset_output_dir；若要重跑同一目录，请先人工确认并清理旧输出。"
+                )
+            if not dry_run:
+                _write_preprocess_fingerprint(fingerprint_path, fingerprint)
+            compatibility_note = "旧版指纹已安全升级；" if not dry_run else "旧版指纹兼容；"
+        else:
+            compatibility_note = ""
         _mark_preprocess_skipped(
             state=state,
             state_path=state_path,
@@ -269,7 +337,7 @@ def _check_preprocess_resume(
             fingerprint=fingerprint,
             fingerprint_path=fingerprint_path,
             status="skipped_verified",
-            message="输入指纹一致且数据集完整，--resume 安全跳过。",
+            message=f"{compatibility_note}输入指纹一致且数据集完整，--resume 安全跳过。",
         )
         return True
 
@@ -400,10 +468,10 @@ def _append_bool_flag(command: list[str], flag: str, value: Any) -> None:
 
 
 def _build_preprocess_command(config: dict[str, Any], dataset_dir: Path, scene_name: str) -> list[str]:
-    section = config.get("preprocess", {})
+    effective = _preprocess_effective_config(config)
     command = [
         sys.executable,
-        str(PROJECT_ROOT / "tools" / "prepare_reference_guided_real_dataset.py"),
+        str(PROJECT_ROOT / "tools" / "prepare_decorrelated_real_dataset.py"),
         "--source-dir",
         str(_resolve_path(_required(config, "source_dir"))),
         "--origin-source",
@@ -415,22 +483,19 @@ def _build_preprocess_command(config: dict[str, Any], dataset_dir: Path, scene_n
         "--scene-name",
         scene_name,
         "--backend",
-        str(section.get("backend", "cuda")),
+        effective["backend"],
         "--chunk-rows",
-        str(section.get("chunk_rows", 600)),
+        str(effective["chunk_rows"]),
     ]
     option_map = {
-        "grid_size": "--grid-size",
-        "seed": "--seed",
         "measurement_glob": "--measurement-glob",
-        "teacher_template": "--teacher-template",
-        "teacher_correlation_threshold": "--teacher-correlation-threshold",
-        "teacher_refit_threshold": "--teacher-refit-threshold",
-        "final_correlation_threshold": "--final-correlation-threshold",
+        "noise_template": "--noise-template",
+        "baseline_adc": "--baseline-adc",
+        "correlation_threshold": "--correlation-threshold",
         "minimum_fitted_peak_adc": "--minimum-fitted-peak-adc",
     }
     for key, flag in option_map.items():
-        _append_option(command, flag, section.get(key))
+        _append_option(command, flag, effective[key])
     return command
 
 
@@ -463,6 +528,8 @@ def _build_training_command(config: dict[str, Any], dataset_dir: Path, scene_nam
         "num_workers": "--num_workers",
         "max_intensity": "--max_intensity",
         "normalization": "--normalization",
+        "normalization_low_percentile": "--normalization_low_percentile",
+        "normalization_high_percentile": "--normalization_high_percentile",
         "im_prefix": "--im_prefix",
         "slm_prefix": "--slm_prefix",
         "zero_freq": "--zero_freq",
@@ -530,6 +597,7 @@ def _build_zernike_command(config: dict[str, Any], phase_path: Path, output_dir:
 
 
 def _preflight(config: dict[str, Any], *, dry_run: bool) -> None:
+    effective = _preprocess_effective_config(config)
     if dry_run:
         return
     source_dir = _resolve_path(_required(config, "source_dir"))
@@ -541,6 +609,9 @@ def _preflight(config: dict[str, Any], *, dry_run: bool) -> None:
         raise FileNotFoundError(f"origin_source 不存在：{origin}")
     if not phase_dir.is_dir():
         raise FileNotFoundError(f"phase_dir 不存在：{phase_dir}")
+    noise_template = Path(effective["noise_template"])
+    if not noise_template.is_file():
+        raise FileNotFoundError(f"固定噪声模板不存在：{noise_template}")
 
 
 def run(
@@ -577,6 +648,7 @@ def run(
     state: dict[str, Any] = {
         "schema_version": 1,
         "pipeline": "real_experiment",
+        "preprocess_method": FIXED_TEMPLATE_METHOD,
         "scene_name": scene_name,
         "config": str(config_path),
         "updated_at": _utc_now(),
@@ -600,7 +672,6 @@ def run(
     if resume or not dry_run:
         preprocess_fingerprint = _build_preprocess_fingerprint(
             config,
-            scene_name=scene_name,
             dataset_dir=dataset_dir,
         )
         num_frames = len(preprocess_fingerprint["inputs"]["measurement_files"])

@@ -52,7 +52,7 @@ python workflows/real_experiment/run_pipeline.py --resume
 [workflows/static_simulation/README.md](workflows/static_simulation/README.md)。
 
 > `workflows/static_simulation/legacy_run_dataset.py` 是保留给旧用法的一步式数据生成 wrapper，不包含当前真实实验
-> reference-guided 主流程、NeuWS 训练和 SLM 导出，已经 deprecated。
+> 固定模板去噪主流程、NeuWS 训练和 SLM 导出，已经 deprecated。
 
 ## 真实实验主链
 
@@ -61,7 +61,7 @@ python workflows/real_experiment/run_pipeline.py --resume
 ```text
 raw *.bin + SLM_simN.mat
         ↓
-tools/prepare_reference_guided_real_dataset.py
+tools/prepare_decorrelated_real_dataset.py
         ↓
 NeuWS dataset (SLM_rawN.mat + SLM_simN.mat)
         ↓
@@ -80,7 +80,9 @@ tools/fit_recovered_zernike.py
 preview PNG 只是给人查看的循环相位图，不是硬件灰度命令。Zernike 分析拟合 Noll
 1–28，生成硬件 candidate 时仍去除 Noll 1–3。
 
-当前生产验证配置为 reference-guided CUDA 后端、`chunk_rows=600`。具体实验参数仍以
+第一阶段固定使用冻结的 361 点电机串扰模板，在完整深度 A-line 上进行 NCC 匹配与
+最小二乘幅值扣除，然后减基线并执行全深度 MIP。它不再自动标定信号深度窗；旧的
+`teacher_*`、`grid_size` 等参数会直接报错。具体实验参数以
 `configs/real_experiment.json` 为准。
 
 ## 安装与测试
@@ -129,7 +131,7 @@ CUDA/CuPy 不可用时，GPU 专项测试会自动跳过；CPU 测试仍应全�
 ```bash
 python -m pytest -q -s \
   tests/test_pa_denoising_gpu.py \
-  tests/test_pa_reference_guided_gpu.py
+  tests/test_real_experiment_pipeline.py
 
 NEUWS_RUN_RADIAL15_CUDA=1 python -m pytest -q -s \
   tests/test_optics_and_evaluation.py::Radial15CudaTests

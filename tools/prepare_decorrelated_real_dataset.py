@@ -7,6 +7,7 @@ import argparse
 import copy
 import hashlib
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -133,14 +134,14 @@ def _save_quality_figures(
     selected: dict[str, TemplateXcorrProjectionResult],
     frame_summaries: list[dict],
     sample_prefix: str,
+    selected_frame_numbers: tuple[int, ...],
 ) -> None:
-    labels = (
-        "origin",
-        f"{sample_prefix}1",
-        f"{sample_prefix}25",
-        f"{sample_prefix}50",
+    labels = ("origin",) + tuple(
+        f"{sample_prefix}{number}" for number in selected_frame_numbers
     )
-    fig, axes = plt.subplots(2, 4, figsize=(18, 9))
+    fig, axes = plt.subplots(2, len(labels), figsize=(4.5 * len(labels), 9))
+    if len(labels) == 1:
+        axes = np.asarray(axes).reshape(2, 1)
     for column, label in enumerate(labels):
         result = selected[label]
         for row, (image, title) in enumerate(
@@ -188,6 +189,85 @@ def _save_quality_figures(
     plt.close(fig)
 
 
+def _measurement_index(path: Path) -> int:
+    match = re.match(r"^[sS](\d+)_", path.name)
+    if match is None:
+        raise ValueError(f"无法从测量文件名解析 sNN 编号：{path.name}")
+    return int(match.group(1))
+
+
+def _infer_shape(path: Path) -> tuple[int, int, int]:
+    match = re.search(r"_(\d+)_(\d+)_(\d+)_PA1\.bin$", path.name, re.IGNORECASE)
+    if match is None:
+        raise ValueError(f"无法从文件名推断 height/width/depth：{path.name}")
+    return tuple(int(value) for value in match.groups())
+
+
+def _phase_index(path: Path) -> int | None:
+    match = re.fullmatch(r"SLM_sim(\d+)\.mat", path.name, re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
+def _discover_direct_inputs(args: argparse.Namespace) -> tuple[
+    dict, list[Path], dict[int, Path], tuple[int, int, int]
+]:
+    source_dir = Path(args.source_dir).expanduser().resolve()
+    phase_dir = Path(args.phase_dir).expanduser().resolve()
+    origin = Path(args.origin_source).expanduser().resolve()
+    if not source_dir.is_dir():
+        raise FileNotFoundError(f"原始测量目录不存在：{source_dir}")
+    if not phase_dir.is_dir():
+        raise FileNotFoundError(f"相位目录不存在：{phase_dir}")
+    if not origin.is_file():
+        raise FileNotFoundError(f"origin BIN 不存在：{origin}")
+
+    measurements = sorted(
+        source_dir.glob(args.measurement_glob), key=_measurement_index
+    )
+    if not measurements:
+        raise FileNotFoundError(
+            f"没有按 {args.measurement_glob!r} 找到测量 PA1 BIN：{source_dir}"
+        )
+    indices = [_measurement_index(path) for path in measurements]
+    expected = list(range(1, len(measurements) + 1))
+    if indices != expected:
+        raise ValueError(f"测量文件编号必须连续为 1..N，实际为：{indices}")
+
+    shape = _infer_shape(measurements[0])
+    inconsistent = [path.name for path in measurements if _infer_shape(path) != shape]
+    if inconsistent:
+        raise ValueError(f"测量文件尺寸不一致，例如：{inconsistent[:3]}")
+    if _infer_shape(origin) != shape:
+        raise ValueError(f"origin 尺寸 {_infer_shape(origin)} 与测量尺寸 {shape} 不一致。")
+
+    phases: dict[int, Path] = {}
+    for path in phase_dir.glob("SLM_sim*.mat"):
+        index = _phase_index(path)
+        if index is not None:
+            phases[index] = path.resolve()
+    missing = [index for index in expected if index not in phases]
+    if missing:
+        raise FileNotFoundError(
+            f"相位目录缺少 SLM_simN.mat；缺失编号前几个：{missing[:10]}"
+        )
+
+    manifest = {
+        "schema_version": 1,
+        "workflow": "fixed_template_decorrelation_direct_input",
+        "scene_name": args.scene_name,
+        "num_frames": len(measurements),
+        "sample_prefix": "s",
+        "frames": [
+            {"measurement_source": path.name, "frame_index": position}
+            for position, path in enumerate(measurements, start=1)
+        ],
+        "phase_source_directory": str(phase_dir),
+        "photoacoustic_preprocessing": {"source_shape": list(shape)},
+        "outputs": {},
+    }
+    return manifest, measurements, phases, shape
+
+
 def _project(
     source: Path,
     *,
@@ -213,11 +293,8 @@ def _project(
 
 
 def _prepare_into(work_dir: Path, args: argparse.Namespace) -> None:
-    template_dir = Path(args.template_data_dir).expanduser().resolve()
     origin_source = Path(args.origin_source).expanduser().resolve()
     template_path = Path(args.noise_template).expanduser().resolve()
-    if not template_dir.is_dir():
-        raise FileNotFoundError(f"模板数据集不存在：{template_dir}")
     if not origin_source.is_file():
         raise FileNotFoundError(f"origin BIN 不存在：{origin_source}")
     template = load_template_csv(template_path)
@@ -229,16 +306,33 @@ def _prepare_into(work_dir: Path, args: argparse.Namespace) -> None:
         else {"backend": "cpu", "cupy_version": None, "gpu_name": None}
     )
 
-    template_manifest = json.loads(
-        (template_dir / "manifest.json").read_text(encoding="utf-8")
-    )
+    template_data_dir = getattr(args, "template_data_dir", None)
+    direct_measurements: list[Path] | None = None
+    direct_phases: dict[int, Path] | None = None
+    if template_data_dir:
+        template_dir = Path(template_data_dir).expanduser().resolve()
+        if not template_dir.is_dir():
+            raise FileNotFoundError(f"模板数据集不存在：{template_dir}")
+        template_manifest = json.loads(
+            (template_dir / "manifest.json").read_text(encoding="utf-8")
+        )
+        source_shape = template_manifest.get("photoacoustic_preprocessing", {}).get(
+            "source_shape", [600, 600, 512]
+        )
+    else:
+        template_dir = None
+        (
+            template_manifest,
+            direct_measurements,
+            direct_phases,
+            direct_shape,
+        ) = _discover_direct_inputs(args)
+        source_shape = list(direct_shape)
+
     num_frames = int(template_manifest["num_frames"])
     frames = template_manifest["frames"]
-    if num_frames != 50 or len(frames) != 50:
-        raise ValueError("本次实验要求连续的 1–50 共 50 帧。")
-    source_shape = template_manifest.get("photoacoustic_preprocessing", {}).get(
-        "source_shape", [600, 600, 512]
-    )
+    if num_frames <= 0 or len(frames) != num_frames:
+        raise ValueError("manifest 中 num_frames 与 frames 不一致或为空。")
     if len(source_shape) != 3:
         raise ValueError(f"模板数据集 source_shape 无效：{source_shape}")
     height, width, depth = (int(value) for value in source_shape)
@@ -257,28 +351,33 @@ def _prepare_into(work_dir: Path, args: argparse.Namespace) -> None:
     for directory in (reference_dir, projection_dir, preview_dir, diagnostic_dir):
         directory.mkdir(parents=True, exist_ok=True)
 
-    template_measurements = np.load(
-        template_dir / "measurements.npy", mmap_mode="r", allow_pickle=False
-    )
-    template_origin = np.load(
-        template_dir / "reference" / "origin_projection.npy",
-        mmap_mode="r",
-        allow_pickle=False,
-    )
-    if template_measurements.shape != (num_frames, height, width):
-        raise ValueError(
-            f"模板 measurements.npy 应为 {(num_frames, height, width)}，"
-            f"实际为 {template_measurements.shape}。"
+    template_measurements = None
+    template_origin = None
+    if template_dir is not None:
+        template_measurements = np.load(
+            template_dir / "measurements.npy", mmap_mode="r", allow_pickle=False
         )
-    if template_origin.shape != (height, width):
-        raise ValueError(
-            f"模板 origin 投影应为 {(height, width)}，实际为 {template_origin.shape}。"
+        template_origin = np.load(
+            template_dir / "reference" / "origin_projection.npy",
+            mmap_mode="r",
+            allow_pickle=False,
         )
+        if template_measurements.shape != (num_frames, height, width):
+            raise ValueError(
+                f"模板 measurements.npy 应为 {(num_frames, height, width)}，"
+                f"实际为 {template_measurements.shape}。"
+            )
+        if template_origin.shape != (height, width):
+            raise ValueError(
+                f"模板 origin 投影应为 {(height, width)}，实际为 {template_origin.shape}。"
+            )
     selected: dict[str, TemplateXcorrProjectionResult] = {}
 
     print("[1/4] 正在处理去相关 origin……", flush=True)
     origin_result = _project(origin_source, template=template, args=args)
-    if not np.array_equal(origin_result.original_projection, template_origin):
+    if template_origin is not None and not np.array_equal(
+        origin_result.original_projection, template_origin
+    ):
         raise RuntimeError("重新解码的 origin MIP 与原数据集不一致，已停止。")
     selected["origin"] = origin_result
     _save_diagnostics(diagnostic_dir, label="origin", result=origin_result)
@@ -307,11 +406,15 @@ def _prepare_into(work_dir: Path, args: argparse.Namespace) -> None:
         shape=(num_frames, height, width),
     )
     frame_summaries = []
-    selected_positions = {1, 25, 50}
+    selected_positions = tuple(sorted({1, (num_frames + 1) // 2, num_frames}))
     source_state = {}
-    print(f"[2/4] 正在处理 50 份 {sample_prefix} 测量……", flush=True)
+    print(f"[2/4] 正在处理 {num_frames} 份 {sample_prefix} 测量……", flush=True)
     for position, record in enumerate(frames, start=1):
-        source = source_dir / record["measurement_source"]
+        source = (
+            direct_measurements[position - 1]
+            if direct_measurements is not None
+            else source_dir / record["measurement_source"]
+        )
         if not source.is_file():
             raise FileNotFoundError(f"缺少第 {position} 帧原始 BIN：{source}")
         source_state[str(source)] = {
@@ -319,7 +422,7 @@ def _prepare_into(work_dir: Path, args: argparse.Namespace) -> None:
             "mtime_ns": source.stat().st_mtime_ns,
         }
         result = _project(source, template=template, args=args)
-        if not np.array_equal(
+        if template_measurements is not None and not np.array_equal(
             result.original_projection, template_measurements[position - 1]
         ):
             raise RuntimeError(
@@ -336,10 +439,14 @@ def _prepare_into(work_dir: Path, args: argparse.Namespace) -> None:
             {"imsdata": result.projection},
             do_compression=True,
         )
-        phase_source = template_dir / f"SLM_sim{position}.mat"
+        phase_source = (
+            direct_phases[position]
+            if direct_phases is not None
+            else template_dir / f"SLM_sim{position}.mat"
+        )
         if not phase_source.is_file():
-            raise FileNotFoundError(f"模板缺少第 {position} 帧相位：{phase_source}")
-        shutil.copy2(phase_source, work_dir / phase_source.name)
+            raise FileNotFoundError(f"缺少第 {position} 帧相位：{phase_source}")
+        shutil.copy2(phase_source, work_dir / f"SLM_sim{position}.mat")
         frame_summaries.append(
             _summarize_result(
                 result, label=f"{sample_prefix}{position}", source=source
@@ -352,8 +459,8 @@ def _prepare_into(work_dir: Path, args: argparse.Namespace) -> None:
                 label=f"{sample_prefix}{position}",
                 result=result,
             )
-        if position == 1 or position % 5 == 0:
-            print(f"  已完成 {position}/50", flush=True)
+        if position == 1 or position % 5 == 0 or position == num_frames:
+            print(f"  已完成 {position}/{num_frames}", flush=True)
     measurements.flush()
 
     for source_name, initial in source_state.items():
@@ -376,6 +483,7 @@ def _prepare_into(work_dir: Path, args: argparse.Namespace) -> None:
         selected=selected,
         frame_summaries=frame_summaries,
         sample_prefix=sample_prefix,
+        selected_frame_numbers=selected_positions,
     )
     origin_summary = _summarize_result(
         origin_result, label="origin", source=origin_source
@@ -391,10 +499,18 @@ def _prepare_into(work_dir: Path, args: argparse.Namespace) -> None:
                 float(np.min([item["matched_pixel_fraction"] for item in frame_summaries])),
                 float(np.max([item["matched_pixel_fraction"] for item in frame_summaries])),
             ],
-            "matched_abs_ncc_median_mean": float(
-                np.mean(
-                    [item["matched_abs_ncc_p10_p50_p90"][1] for item in frame_summaries]
+            "matched_abs_ncc_median_mean": (
+                float(
+                    np.mean(
+                        [
+                            item["matched_abs_ncc_p10_p50_p90"][1]
+                            for item in frame_summaries
+                            if item["matched_abs_ncc_p10_p50_p90"]
+                        ]
+                    )
                 )
+                if any(item["matched_abs_ncc_p10_p50_p90"] for item in frame_summaries)
+                else None
             ),
             "frame_mean_cv_after": float(
                 np.std([item["projection_mean_before_after_adc"][1] for item in frame_summaries])
@@ -414,11 +530,11 @@ def _prepare_into(work_dir: Path, args: argparse.Namespace) -> None:
             "workflow": "real_point_scan_neuws_origin_only_template_decorrelated",
             "scene_name": args.scene_name,
             "source_directory": str(source_dir),
-            "template_dataset": str(template_dir),
+            "template_dataset": str(template_dir) if template_dir is not None else None,
             "measurement_max": measurement_max,
             "measurement_normalization": (
                 f"one shared maximum across all decorrelated {sample_prefix}1-"
-                f"{sample_prefix}50 frames, applied by BatchDataset"
+                f"{sample_prefix}{num_frames} frames, applied by BatchDataset"
             ),
             "photoacoustic_preprocessing": {
                 "input_encoding": "packed unsigned 12-bit little-endian",
@@ -460,8 +576,9 @@ def _prepare_into(work_dir: Path, args: argparse.Namespace) -> None:
             "quality_trends": "quality_trends.png",
             "quality_control_report": "quality_control.json",
             "diagnostics": (
-                f"diagnostics/{{origin,{sample_prefix}1,{sample_prefix}25,"
-                f"{sample_prefix}50}}_*.tif"
+                "diagnostics/{origin,"
+                + ",".join(f"{sample_prefix}{number}" for number in selected_positions)
+                + "}_*.tif"
             ),
         }
     )
@@ -493,9 +610,22 @@ def prepare(args: argparse.Namespace) -> Path:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--template-data-dir", required=True)
+    input_mode = parser.add_mutually_exclusive_group(required=True)
+    input_mode.add_argument(
+        "--template-data-dir",
+        help="历史兼容模式：从已有未去相关数据集读取 manifest、MIP 和 SLM 相位。",
+    )
+    input_mode.add_argument(
+        "--phase-dir",
+        help="直接输入模式：从该目录复制 SLM_simN.mat，不需要已有数据集。",
+    )
     parser.add_argument("--source-dir", required=True)
     parser.add_argument("--origin-source", required=True)
+    parser.add_argument(
+        "--measurement-glob",
+        default="s*_600_600_512_PA1.bin",
+        help="直接输入模式下的测量 BIN 匹配模式。",
+    )
     parser.add_argument("--noise-template", default=str(DEFAULT_NOISE_TEMPLATE))
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--scene-name", required=True)

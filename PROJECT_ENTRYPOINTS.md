@@ -37,7 +37,7 @@ python workflows/real_experiment/run_pipeline.py --resume
 
 | 顺序 | 任务 | 正式入口 | 主要输出 |
 | --- | --- | --- | --- |
-| 1 | reference-guided 自适应 A-line 去相关并建集 | `tools/prepare_reference_guided_real_dataset.py` | excess-RMS、自动标定/QC、`SLM_rawN.mat` |
+| 1 | 固定模板 A-line 去相关并建集 | `tools/prepare_decorrelated_real_dataset.py` | 全深度 MIP、QC、`SLM_rawN.mat` |
 | 2 | NeuWS 网络训练与像差恢复 | `workflows/reconstruction/reconstruct_neuws.py` | `vis/<scene>/final/final_aberration.mat`、`training_summary.json` |
 | 3 | **立即导出硬件 SLM 校正** | `tools/export_slm_correction.py` | **`SLM_final_correction_1080.png`** / MAT / NPY |
 | 4 | Zernike 拟合与分析 | `tools/fit_recovered_zernike.py` | 系数、拟合相位、报告 |
@@ -51,15 +51,14 @@ python workflows/real_experiment/run_pipeline.py --resume
 
 | 场景 | 入口 |
 | --- | --- |
-| **新实验：历史 teacher → 当前实验模板 + 自动信号/噪声窗 + excess-RMS + CUDA 建集** | **`tools/prepare_reference_guided_real_dataset.py`（当前推荐）** |
-| 早期实验级自适应流程复现 | `tools/prepare_adaptive_real_dataset.py` |
-| 复现旧的固定模板去相关 + 全深度 MIP | `tools/prepare_decorrelated_real_dataset.py` |
+| **新实验：固定串扰模板去相关 + 全深度 MIP + CUDA 建集** | **`tools/prepare_decorrelated_real_dataset.py`（当前唯一正式入口）** |
+| 早期自动深度/reference-guided 实验复现 | `tools/prepare_reference_guided_real_dataset.py`、`tools/prepare_adaptive_real_dataset.py`（历史研究入口，不接入 pipeline） |
 | 不去串扰的普通 packed-12 BIN + 建集 | `tools/prepare_real_point_scan_dataset.py` |
 | 旧的 excess-RMS 方法复现 | `tools/prepare_denoised_real_dataset.py`（兼容/研究入口） |
 
-reference-guided 流程使用历史固定模板作为 teacher，在当前实验高可信事件上自动重标定
-实验模板；最终去相关继续使用已验证的 NCC 匹配、LS 系数拟合和非循环模板减法。
-生产验证配置为 CUDA、`chunk_rows=600`，整批实验复用 persistent GPU workspace。
+正式流程直接使用版本固定的 361 点电机串扰模板，在完整 A-line 上执行 NCC 匹配、
+LS 系数拟合和非循环模板减法，再减基线并做全深度 MIP。它不自动寻找或标定信号
+深度窗。旧的自动深度配置字段会被总控入口明确拒绝。
 
 ## 静态仿真 workflow
 
@@ -84,7 +83,7 @@ workflow，会要求 CUDA；它不是通用默认入口。
 
 | 任务 | 入口 |
 | --- | --- |
-| reference-guided 整批 BIN 去相关并建集 | `tools/prepare_reference_guided_real_dataset.py` |
+| 固定模板整批 BIN 去相关并建集 | `tools/prepare_decorrelated_real_dataset.py` |
 | 单图添加指定像差 | `tools/apply_aberration.py` |
 | 生成仿真数据/SLM pattern | `tools/generate_neuws_data.py` |
 | 单纯 BIN → 多页 TIFF 或 MIP | `python -m dataio.bin_to_tiff` |
@@ -104,7 +103,7 @@ workflow，会要求 CUDA；它不是通用默认入口。
 Zernike 系数后点击运行。其真正实现是 `tools/apply_aberration.py`。
 
 `workflows/static_simulation/legacy_run_dataset.py` **已 deprecated**。它仍可复现旧的一步式随机数据生成，但不包含
-reference-guided 预处理、NeuWS 训练、SLM 校正导出和阶段恢复。
+固定模板预处理、NeuWS 训练、SLM 校正导出和阶段恢复。
 
 ## 不直接运行的模块
 
@@ -125,14 +124,17 @@ workflows/.../workflow.py   workflow 底层编排
 如果不使用总控入口，可手动分别运行：
 
 ```bash
-python tools/prepare_reference_guided_real_dataset.py \
+python tools/prepare_decorrelated_real_dataset.py \
   --source-dir /path/to/raw_experiment \
   --origin-source /path/to/origin_PA1.bin \
   --phase-dir /path/to/SLM_sim_mat \
   --output-dir /path/to/processed_dataset \
   --scene-name new_scene \
   --backend cuda \
-  --chunk-rows 600
+  --chunk-rows 10 \
+  --baseline-adc 2048 \
+  --correlation-threshold 0.7 \
+  --minimum-fitted-peak-adc 80
 
 python workflows/reconstruction/reconstruct_neuws.py \
   --static_phase \

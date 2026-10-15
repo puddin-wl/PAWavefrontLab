@@ -202,10 +202,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max_intensity", default=0, type=float)
     parser.add_argument(
         "--normalization",
-        choices=("shared-max", "per-frame-minmax"),
+        choices=("shared-max", "shared-percentile", "per-frame-minmax"),
         default="shared-max",
         help="Measurement scaling applied by BatchDataset.",
     )
+    parser.add_argument("--normalization_low_percentile", default=1.0, type=float)
+    parser.add_argument("--normalization_high_percentile", default=99.99, type=float)
     parser.add_argument("--im_prefix", default="SLM_raw")
     parser.add_argument("--slm_prefix", default="SLM_sim")
     parser.add_argument("--zero_freq", default=-1, type=int)
@@ -291,6 +293,8 @@ def main() -> None:
         max_intensity=args.max_intensity,
         zero_freq=args.zero_freq,
         normalization=args.normalization,
+        normalization_low_percentile=args.normalization_low_percentile,
+        normalization_high_percentile=args.normalization_high_percentile,
     )
     width = dataset.width
     if args.width is not None and args.width != width:
@@ -642,6 +646,17 @@ def main() -> None:
         "network_zernike_features": args.zernike_features,
         "static_phase": args.static_phase,
         "measurement_normalization_max": dataset.max_intensity,
+        "measurement_normalization_offset": dataset.normalization_offset,
+        "measurement_normalization_low_percentile": (
+            dataset.normalization_low_percentile
+            if dataset.normalization == "shared-percentile"
+            else None
+        ),
+        "measurement_normalization_high_percentile": (
+            dataset.normalization_high_percentile
+            if dataset.normalization == "shared-percentile"
+            else None
+        ),
         "measurement_normalization": dataset.normalization,
         "loss_history": loss_history,
         "measurement_mse_history": loss_history,
@@ -705,6 +720,17 @@ def main() -> None:
         "measurement_normalization": {
             "method": dataset.normalization,
             "maximum": dataset.max_intensity,
+            "offset": dataset.normalization_offset,
+            "low_percentile": (
+                dataset.normalization_low_percentile
+                if dataset.normalization == "shared-percentile"
+                else None
+            ),
+            "high_percentile": (
+                dataset.normalization_high_percentile
+                if dataset.normalization == "shared-percentile"
+                else None
+            ),
         },
         "random_state": {
             "python": random.getstate(),

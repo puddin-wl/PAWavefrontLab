@@ -14,11 +14,11 @@ configs/real_experiment.json
 
 ```json
 {
-  "scene_name": "YYYY-MM-DD_reference_guided",
+  "scene_name": "YYYY-MM-DD_fixed_template_decorrelated",
   "source_dir": "/home/USER/data/PAWavefrontLab/raw/YYYY-MM-DD",
   "origin_source": "/home/USER/data/PAWavefrontLab/raw/YYYY-MM-DD/origin_xxx_600_600_512_PA1.bin",
   "phase_dir": "/home/USER/program/PAWavefrontLab/data/slm50_noll4_28_decay4x_600_1080/model_600/mat",
-  "dataset_output_dir": "/home/USER/data/PAWavefrontLab/processed/YYYY-MM-DD_reference_guided"
+  "dataset_output_dir": "/home/USER/data/PAWavefrontLab/processed/YYYY-MM-DD_fixed_template_decorrelated"
 }
 ```
 
@@ -28,7 +28,22 @@ configs/real_experiment.json
 - `source_dir`：本次实验 `s01...sNN` 的 PA1 BIN 所在文件夹。
 - `origin_source`：本次实验 origin PA1 BIN 的完整路径。
 - `phase_dir`：与本次采集一一对应的 `SLM_sim1.mat ... SLM_simN.mat` 所在目录。这里不是 SLM 硬件直接加载的 PNG 目录。
-- `dataset_output_dir`：reference-guided 去相关后生成 NeuWS 数据集的位置。不同实验建议使用不同目录。
+- `dataset_output_dir`：固定模板去相关后生成 NeuWS 数据集的位置。不同实验建议使用不同目录。
+
+`preprocess.method` 固定为：
+
+```json
+"fixed-template-decorrelation-full-depth-mip"
+```
+
+固定串扰模板由 `preprocess.noise_template` 指定，正式配置使用：
+
+```text
+denoising/motor_crosstalk/template/motor_crosstalk_template_v1.csv
+```
+
+正式流程不再自动寻找或标定信号深度窗。旧的 `grid_size`、`teacher_*`、
+`final_correlation_threshold` 等字段必须删除；保留它们会直接报错。
 
 ## 2. 正常的新实验怎么跑
 
@@ -48,7 +63,7 @@ python workflows/real_experiment/run_pipeline.py 2>&1 | tee log/pipeline_YYYY-MM
 
 ```text
 01_preprocess
-    原始 BIN -> reference-guided 去相关 -> NeuWS 数据集
+    原始 BIN -> 固定模板去相关 -> 全深度 MIP -> NeuWS 数据集
 
 02_train
     NeuWS 训练 -> final_aberration.mat
@@ -71,7 +86,7 @@ SLM 校正相位已生成，可以立即加载到 SLM：
 
 ## 3. 结果都在哪里
 
-### reference-guided 预处理数据集
+### 固定模板预处理数据集
 
 ```text
 <dataset_output_dir>/
@@ -134,8 +149,8 @@ vis/<scene_name>/pipeline_state.json
 - 所有 `s01...sNN` BIN 的绝对路径、文件大小、纳秒级修改时间；
 - `phase_dir`；
 - 所有对应 `SLM_simN.mat` 的绝对路径、文件大小、纳秒级修改时间；
-- teacher template；
-- reference-guided 预处理参数；
+- 固定噪声模板文件；
+- 固定模板去相关参数；
 - `scene_name` 和 `dataset_output_dir`。
 
 只有“输入指纹一致”并且 `SLM_raw1...N`、`SLM_sim1...N`、`manifest.json` 全部存在时，才会显示：

@@ -192,6 +192,32 @@ class ClosedLoopTests(unittest.TestCase):
                 self.assertAlmostEqual(float(measurement.min()), 0.0, places=6)
                 self.assertAlmostEqual(float(measurement.max()), 1.0, places=6)
 
+    def test_loader_supports_shared_percentile_normalization(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data_dir = Path(temporary)
+            phase = np.zeros((4, 4), dtype=np.float32)
+            image1 = np.arange(16, dtype=np.float32).reshape(4, 4)
+            image2 = image1 + 10
+            image2[-1, -1] = 1000
+            for index, image in enumerate((image1, image2), start=1):
+                sio.savemat(data_dir / f"SLM_raw{index}.mat", {"imsdata": image})
+                sio.savemat(data_dir / f"SLM_sim{index}.mat", {"proj_sim": phase})
+
+            dataset = BatchDataset(
+                data_dir,
+                normalization="shared-percentile",
+                normalization_low_percentile=0,
+                normalization_high_percentile=90,
+            )
+            _, first, _ = dataset[0]
+            _, second, _ = dataset[1]
+
+            self.assertEqual(dataset.normalization_offset, 0.0)
+            self.assertLess(dataset.max_intensity, 1000.0)
+            self.assertEqual(float(second.max()), 1.0)
+            self.assertGreater(float(first.max()), 0.0)
+            self.assertLessEqual(float(first.max()), 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()
