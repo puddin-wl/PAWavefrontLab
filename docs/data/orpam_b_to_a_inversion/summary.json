@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "experiment": "B_to_A_only",
+  "model_b_generation": {
+    "frames": 50,
+    "fft_size": 2160,
+    "kernel_radius": 32,
+    "quadrature_order": 12,
+    "device": "cpu",
+    "elapsed_seconds": 38.86572040594183,
+    "measurement_shared_maximum": 0.8524580597877502,
+    "kernel_retained_energy_mean": 0.9952014589309692,
+    "kernel_retained_energy_minimum": 0.9940345883369446,
+    "kernel_retained_energy_maximum": 0.9960717558860779
+  },
+  "training": {
+    "device": "cuda",
+    "epochs": 400,
+    "elapsed_seconds": 419.31917119026184,
+    "initial_measurement_mse": 0.014119329396635294,
+    "final_epoch_measurement_mse": 4.000352873845259e-05,
+    "minimum_epoch_measurement_mse": 3.9755856050760485e-05,
+    "final_evaluation_measurement_mse": 4.7507806302746756e-05,
+    "final_total_loss": 6.361415842548012e-05
+  },
+  "phase": {
+    "piston_only_removed": true,
+    "rmse_rad": 0.24738167550458548,
+    "mae_rad": 0.19147715058206685,
+    "correlation": 0.5712169798769479,
+    "truth_rms_rad": 0.2977140491288696,
+    "estimate_rms_rad": 0.20858477445399332,
+    "relative_rmse_to_truth_rms": 0.8309371903289082
+  },
+  "zernike_28": {
+    "coefficient_rmse_rad": 0.10651761516786057,
+    "coefficient_mae_rad": 0.07087599250787337,
+    "coefficient_correlation_without_piston": 0.5425094059808833
+  },
+  "signed_pupil_amplitude": {
+    "minimum": -0.012419689446687698,
+    "maximum": 0.18258599936962128,
+    "mean": 0.12910889089107513,
+    "standard_deviation": 0.030319564044475555,
+    "absolute_amplitude_coefficient_of_variation": 0.23437340557575226,
+    "negative_fraction": 0.0012444444444444445
+  },
+  "object": {
+    "rmse": 0.0328167838451996,
+    "mae": 0.014809209262760355,
+    "correlation": 0.9374665342745722,
+    "normalized_l2": 0.2847425808660962,
+    "negative_fraction": 0.0032527777777777776
+  },
+  "observations": {
+    "frame_mse_mean": 4.7507811492421604e-05,
+    "frame_mse_median": 4.1983404877347544e-05,
+    "frame_mse_minimum": 2.5111920439496086e-05,
+    "frame_mse_minimum_frame": 12,
+    "frame_mse_maximum": 0.00010422410480978047,
+    "frame_mse_maximum_frame": 19,
+    "relative_l2_mean": 0.05410128985352565
+  },
+  "conclusion": "low observation loss but inaccurate fixed-aberration recovery; object and nonuniform pupil amplitude provide compensation channels"
+}
