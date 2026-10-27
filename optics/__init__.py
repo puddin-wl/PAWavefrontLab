@@ -22,6 +22,16 @@ from .propagation import (
     zernike_basis_numpy,
     zernike_basis_torch,
 )
+from .orpam_model_b import (
+    ModelBFrameOutput,
+    ORPAMForwardModelB,
+    ORPAMModelBConfig,
+    OpticalPSF,
+    ideal_fourier_psf,
+    integrate_equivalent_kernel,
+    kernel_energy_diagnostics,
+    scan_correlation,
+)
 
 __all__ = [
     "PAPER_APERTURE_RATIO",
@@ -44,4 +54,12 @@ __all__ = [
     "zernike_aberration_from_coefficients",
     "zernike_basis_numpy",
     "zernike_basis_torch",
+    "ModelBFrameOutput",
+    "ORPAMForwardModelB",
+    "ORPAMModelBConfig",
+    "OpticalPSF",
+    "ideal_fourier_psf",
+    "integrate_equivalent_kernel",
+    "kernel_energy_diagnostics",
+    "scan_correlation",
 ]

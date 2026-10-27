@@ -1,0 +1,341 @@
+{
+  "schema_version": 1,
+  "phase_library": "data/slm50_noll4_28_decay4x_600_1080",
+  "measurement_dataset": "data/2026-10-13_object_mmes",
+  "validated_mapping_count": 50,
+  "validated_png_count": 50,
+  "maximum_mat_png_circular_phase_error_rad": 4.845280686893716e-05,
+  "object": {
+    "name": "deterministic three-line fibre phantom",
+    "shape": [
+      600,
+      600
+    ],
+    "scan_pitch_um": 5.0
+  },
+  "aberration": {
+    "name": "polynomial_aberration_v1",
+    "coordinate_definition": "x,y=(index-(N-1)/2)/(N/2)",
+    "phase_radians": "0.45*(x^2+y^2) + 0.35*(x^2-y^2) + 0.30*x*(x^2+y^2)",
+    "terms": {
+      "radial_quadratic_rad": 0.45,
+      "square_astigmatism_rad": 0.35,
+      "x_cubic_coma_like_rad": 0.3
+    }
+  },
+  "normalized_l2_definition": "||A/||A||_2 - B/||B||_2||_2",
+  "settings": {
+    "primary_fft_size": 2160,
+    "reference_fft_size": 4320,
+    "primary_focus_pitch_um": 1.924189814814815,
+    "reference_focus_pitch_um": 0.9620949074074076,
+    "kernel_radius": 32,
+    "kernel_size": 65,
+    "quadrature_order": 12,
+    "ideal_sinc2_fwhm_um": 3.40927951388889
+  },
+  "conditions": {
+    "zero_aberration": {
+      "ab_normalized_l2": {
+        "mean": 0.36977940180600255,
+        "median": 0.3697781962506247,
+        "minimum": 0.2207714983365375,
+        "minimum_frame": 29,
+        "middle_frame": 27,
+        "middle_value": 0.37327084808896094,
+        "maximum": 0.5324675060131178,
+        "maximum_frame": 30
+      },
+      "kernel_retained_energy": {
+        "mean": 0.9951843559741974,
+        "median": 0.9952265024185181,
+        "minimum": 0.9939507246017456,
+        "minimum_frame": 30,
+        "middle_frame": 21,
+        "middle_value": 0.9952327013015747,
+        "maximum": 0.9961072206497192,
+        "maximum_frame": 32
+      },
+      "kernel_truncation_error": {
+        "mean": 0.004815644025802613,
+        "median": 0.004773497581481934,
+        "minimum": 0.0038927793502807617,
+        "minimum_frame": 32,
+        "middle_frame": 45,
+        "middle_value": 0.004779696464538574,
+        "maximum": 0.0060492753982543945,
+        "maximum_frame": 30
+      },
+      "model_b_psf_peak_inverse_m2": {
+        "mean": 9077920424.96,
+        "median": 8342764800.0,
+        "minimum": 3853766400.0,
+        "minimum_frame": 15,
+        "middle_frame": 41,
+        "middle_value": 8546790912.0,
+        "maximum": 18963331072.0,
+        "maximum_frame": 30
+      },
+      "model_b_rms_radius_um": {
+        "mean": 49.004880749279124,
+        "median": 49.03258748859575,
+        "minimum": 48.0796076542109,
+        "minimum_frame": 7,
+        "middle_frame": 12,
+        "middle_value": 49.040992701505715,
+        "maximum": 49.82068687336368,
+        "maximum_frame": 45
+      },
+      "model_b_centroid_row_um": {
+        "mean": 0.13980263790077818,
+        "median": 0.0947159430641939,
+        "minimum": -1.209850536762987,
+        "minimum_frame": 31,
+        "middle_frame": 2,
+        "middle_value": 0.10867862519404803,
+        "maximum": 1.4315483152709598,
+        "maximum_frame": 49
+      },
+      "model_b_centroid_column_um": {
+        "mean": 0.15958936599011544,
+        "median": 0.284270703031509,
+        "minimum": -1.5931060152531529,
+        "minimum_frame": 27,
+        "middle_frame": 46,
+        "middle_value": 0.3223023314887891,
+        "maximum": 1.5335169306955982,
+        "maximum_frame": 21
+      }
+    },
+    "polynomial_aberration_v1": {
+      "ab_normalized_l2": {
+        "mean": 0.36991365245464913,
+        "median": 0.36963650207892024,
+        "minimum": 0.22002760366225546,
+        "minimum_frame": 29,
+        "middle_frame": 26,
+        "middle_value": 0.3713238675076264,
+        "maximum": 0.5331825225858557,
+        "maximum_frame": 38
+      },
+      "kernel_retained_energy": {
+        "mean": 0.9952014589309692,
+        "median": 0.9952877759933472,
+        "minimum": 0.9940345883369446,
+        "minimum_frame": 18,
+        "middle_frame": 1,
+        "middle_value": 0.9952884316444397,
+        "maximum": 0.9960717558860779,
+        "maximum_frame": 33
+      },
+      "kernel_truncation_error": {
+        "mean": 0.004798541069030762,
+        "median": 0.004712224006652832,
+        "minimum": 0.003928244113922119,
+        "minimum_frame": 33,
+        "middle_frame": 6,
+        "middle_value": 0.004712879657745361,
+        "maximum": 0.00596541166305542,
+        "maximum_frame": 18
+      },
+      "model_b_psf_peak_inverse_m2": {
+        "mean": 8865063633.92,
+        "median": 8031203072.0,
+        "minimum": 3445811968.0,
+        "minimum_frame": 15,
+        "middle_frame": 31,
+        "middle_value": 8097697280.0,
+        "maximum": 19536439296.0,
+        "maximum_frame": 19
+      },
+      "model_b_rms_radius_um": {
+        "mean": 49.00248112130368,
+        "median": 49.04237498747606,
+        "minimum": 48.06927843420893,
+        "minimum_frame": 20,
+        "middle_frame": 37,
+        "middle_value": 49.05022501201125,
+        "maximum": 49.76749821386499,
+        "maximum_frame": 27
+      },
+      "model_b_centroid_row_um": {
+        "mean": 0.13980265941264022,
+        "median": 0.09471599802714986,
+        "minimum": -1.2098505887802808,
+        "minimum_frame": 31,
+        "middle_frame": 2,
+        "middle_value": 0.10867859148327731,
+        "maximum": 1.4315484277965767,
+        "maximum_frame": 49
+      },
+      "model_b_centroid_column_um": {
+        "mean": 0.6490210884045778,
+        "median": 0.7737289143785202,
+        "minimum": -1.1036450604163823,
+        "minimum_frame": 27,
+        "middle_frame": 46,
+        "middle_value": 0.8116636504187464,
+        "maximum": 2.022898097531859,
+        "maximum_frame": 21
+      }
+    }
+  },
+  "correlations": {
+    "zero_aberration": {
+      "difference_vs_phase_rms": {
+        "pearson_r": -0.35115277911348863,
+        "pearson_p": 0.012404890713337523,
+        "spearman_rho": -0.32235294117647056,
+        "spearman_p": 0.022427641610968697
+      },
+      "difference_vs_coefficient_l2": {
+        "pearson_r": -0.33415099412658184,
+        "pearson_p": 0.017708456541493924,
+        "spearman_rho": -0.3054501800720288,
+        "spearman_p": 0.030999858063385715
+      },
+      "difference_vs_psf_rms": {
+        "pearson_r": -0.3939079590000537,
+        "pearson_p": 0.004650165653752157,
+        "spearman_rho": -0.37181272509003604,
+        "spearman_p": 0.007844872758844053
+      }
+    },
+    "polynomial_aberration_v1": {
+      "difference_vs_phase_rms": {
+        "pearson_r": -0.3564308870468965,
+        "pearson_p": 0.011064667467629274,
+        "spearman_rho": -0.3260984393757503,
+        "spearman_p": 0.02082650763472112
+      },
+      "difference_vs_coefficient_l2": {
+        "pearson_r": -0.3208857846507087,
+        "pearson_p": 0.023082458275647758,
+        "spearman_rho": -0.30804321728691475,
+        "spearman_p": 0.029530773034218544
+      },
+      "difference_vs_psf_rms": {
+        "pearson_r": -0.3360767912771647,
+        "pearson_p": 0.017024492129862717,
+        "spearman_rho": -0.3411764705882353,
+        "spearman_p": 0.015320771357549518
+      }
+    }
+  },
+  "representatives": {
+    "minimum": 29,
+    "middle": 27,
+    "maximum": 30
+  },
+  "factor_decomposition": {
+    "frame": 27,
+    "legacy_a_vs_physical600_point": 0.3805407662901568,
+    "physical600_point_vs_area": 0.12376851525073858,
+    "physical600_area_vs_physical1080_area": 0.0009905314155358844,
+    "physical1080_point_vs_area": 0.12333254504484832,
+    "correct_vs_wrong_flipped_kernel": 0.15071269498410275,
+    "truncated_vs_renormalized_normalized_l2": 2.406849819859228e-07,
+    "truncated_vs_renormalized_raw_relative_l2": 0.00441823782645366,
+    "legacy_a_vs_b_global": 0.3747420394364708,
+    "legacy_a_vs_b_interior": 0.3747419751757121,
+    "physical600_focus_pitch_um": 0.9620949074074076,
+    "physical1080_focus_pitch_um": 0.9620949074074076,
+    "physical600_kernel_energy": 0.995659351348877,
+    "physical1080_kernel_energy": 0.9956011772155762
+  },
+  "ideal_focus": {
+    "measured_ideal_fwhm_um": 3.3986964747323554,
+    "ideal_peak_inverse_m2": 67521818624.0,
+    "aberrated_peak_inverse_m2": 61861937152.0,
+    "aberrated_strehl_ratio": 0.916176974773407
+  },
+  "convergence_rows": [
+    {
+      "frame": 29,
+      "fft_size": 1080,
+      "focus_pitch_um": 3.84837962962963,
+      "kernel_retained_energy": 0.9957621097564697,
+      "ab_normalized_l2": 0.21188289690755782,
+      "kernel_relative_l2_vs_4320": 0.20045472070378131,
+      "image_normalized_l2_vs_4320": 0.02456889426246296
+    },
+    {
+      "frame": 29,
+      "fft_size": 2160,
+      "focus_pitch_um": 1.924189814814815,
+      "kernel_retained_energy": 0.9955376386642456,
+      "ab_normalized_l2": 0.2207714983365375,
+      "kernel_relative_l2_vs_4320": 0.02803558352398998,
+      "image_normalized_l2_vs_4320": 0.0033442146072971187
+    },
+    {
+      "frame": 29,
+      "fft_size": 4320,
+      "focus_pitch_um": 0.9620949074074076,
+      "kernel_retained_energy": 0.9952186942100525,
+      "ab_normalized_l2": 0.22207019294207528,
+      "kernel_relative_l2_vs_4320": 0.0,
+      "image_normalized_l2_vs_4320": 0.0
+    },
+    {
+      "frame": 27,
+      "fft_size": 1080,
+      "focus_pitch_um": 3.84837962962963,
+      "kernel_retained_energy": 0.994748592376709,
+      "ab_normalized_l2": 0.35894751782636014,
+      "kernel_relative_l2_vs_4320": 0.20864280110132555,
+      "image_normalized_l2_vs_4320": 0.02873753727985119
+    },
+    {
+      "frame": 27,
+      "fft_size": 2160,
+      "focus_pitch_um": 1.924189814814815,
+      "kernel_retained_energy": 0.9956395626068115,
+      "ab_normalized_l2": 0.37327084808896094,
+      "kernel_relative_l2_vs_4320": 0.034341874124680635,
+      "image_normalized_l2_vs_4320": 0.00334334402571074
+    },
+    {
+      "frame": 27,
+      "fft_size": 4320,
+      "focus_pitch_um": 0.9620949074074076,
+      "kernel_retained_energy": 0.9956011772155762,
+      "ab_normalized_l2": 0.3747420394364708,
+      "kernel_relative_l2_vs_4320": 0.0,
+      "image_normalized_l2_vs_4320": 0.0
+    },
+    {
+      "frame": 30,
+      "fft_size": 1080,
+      "focus_pitch_um": 3.84837962962963,
+      "kernel_retained_energy": 0.9949876666069031,
+      "ab_normalized_l2": 0.5231910650511388,
+      "kernel_relative_l2_vs_4320": 0.21888381377718155,
+      "image_normalized_l2_vs_4320": 0.044691863687823546
+    },
+    {
+      "frame": 30,
+      "fft_size": 2160,
+      "focus_pitch_um": 1.924189814814815,
+      "kernel_retained_energy": 0.9939507246017456,
+      "ab_normalized_l2": 0.5324675060131178,
+      "kernel_relative_l2_vs_4320": 0.06729522862068667,
+      "image_normalized_l2_vs_4320": 0.009743868394572896
+    },
+    {
+      "frame": 30,
+      "fft_size": 4320,
+      "focus_pitch_um": 0.9620949074074076,
+      "kernel_retained_energy": 0.9951022267341614,
+      "ab_normalized_l2": 0.5359309329700409,
+      "kernel_relative_l2_vs_4320": 0.0,
+      "image_normalized_l2_vs_4320": 0.0
+    }
+  ],
+  "limitations": [
+    "Model A has no physical focal-plane coordinate, so its discrete FFT and physical scaling cannot be completely orthogonalized.",
+    "The controlled A/B comparison fixes pupil amplitude to one and does not measure the trained StaticDiffuseNet amplitude branch.",
+    "The 65x65 Model-B kernel is not renormalized after truncation.",
+    "No 50-frame 8640 FFT sweep was attempted."
+  ]
+}
