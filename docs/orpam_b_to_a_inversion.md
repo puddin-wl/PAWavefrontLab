@@ -94,22 +94,40 @@ x,y = (index-(N-1)/2)/(N/2)
 
 物体主指标不拟合任意增益：只撤销 NeuWS 加载器的 shared-max 标量，使恢复物体回到输入代理物体的 `[0,1]` 尺度。最佳增益只作为附加形状诊断。
 
+## 结果图
+
+真值相位、模型 A 恢复相位、相位残差及实际参与前向计算的有符号复瞳振幅：
+
+![相位真值、恢复相位、残差与复瞳振幅](figures/orpam_b_to_a_inversion/phase_and_amplitude.png)
+
+已知血管代理物体、模型 A 恢复物体及二者差异；真值和恢复图使用同一显示范围：
+
+![代理物体、恢复物体与差异](figures/orpam_b_to_a_inversion/object_comparison.png)
+
+训练 Loss 曲线与 28 项 Zernike 系数对比：
+
+![Loss 曲线与 Zernike 系数](figures/orpam_b_to_a_inversion/loss_and_zernike.png)
+
+逐帧 MSE 最小、中位和最大的代表帧。每行的模型 B 观测与模型 A 预测使用统一显示范围，差异图也使用统一的对称范围：
+
+![代表帧的模型 B 观测、模型 A 预测与差异](figures/orpam_b_to_a_inversion/observation_fits.png)
+
 ## 结果文件
 
-提交到 Git 的非敏感数值摘要：
+提交到 Git 的数值摘要和检查图：
 
 - [summary.json](data/orpam_b_to_a_inversion/summary.json)
 - [frame_residuals.csv](data/orpam_b_to_a_inversion/frame_residuals.csv)
 - [zernike_coefficients.csv](data/orpam_b_to_a_inversion/zernike_coefficients.csv)
+- [phase_and_amplitude.png](figures/orpam_b_to_a_inversion/phase_and_amplitude.png)
+- [object_comparison.png](figures/orpam_b_to_a_inversion/object_comparison.png)
+- [loss_and_zernike.png](figures/orpam_b_to_a_inversion/loss_and_zernike.png)
+- [observation_fits.png](figures/orpam_b_to_a_inversion/observation_fits.png)
 
-含血管结构或大数组的结果只保存在本地，没有提交：
+原始输入、完整 50 帧数据、大数组、检查点和完整训练日志仍只保存在本地，没有提交：
 
 ```text
 outputs/orpam_b_to_a/dataset_nfft2160/
-outputs/orpam_b_to_a/analysis/phase_and_amplitude.png
-outputs/orpam_b_to_a/analysis/object_comparison.png
-outputs/orpam_b_to_a/analysis/loss_and_zernike.png
-outputs/orpam_b_to_a/analysis/observation_fits.png
 outputs/orpam_b_to_a/analysis/recovered_arrays.npz
 vis/orpam_b_to_a_inversion/final/model_final.pt
 vis/orpam_b_to_a_inversion/final/training_summary.json
