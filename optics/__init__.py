@@ -30,6 +30,7 @@ from .orpam_model_b import (
     ideal_fourier_psf,
     integrate_equivalent_kernel,
     kernel_energy_diagnostics,
+    pupil_amplitude_mask,
     scan_correlation,
 )
 
@@ -61,5 +62,6 @@ __all__ = [
     "ideal_fourier_psf",
     "integrate_equivalent_kernel",
     "kernel_energy_diagnostics",
+    "pupil_amplitude_mask",
     "scan_correlation",
 ]

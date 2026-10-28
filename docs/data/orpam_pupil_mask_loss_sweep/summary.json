@@ -1,0 +1,230 @@
+{
+  "schema_version": 1,
+  "experiment": "fixed_aberration_alpha_sweep_no_training",
+  "network_training_performed": false,
+  "object_fixed": true,
+  "pupil_amplitude_fixed_uniform_inside_mask": true,
+  "phase_formula": "Phi_alpha = alpha * Phi_true",
+  "phase_sign": "exp(+1j*Phi_alpha) exp(-1j*Gamma_i)",
+  "alpha_values": [
+    -8.0,
+    -7.5,
+    -7.0,
+    -6.5,
+    -6.0,
+    -5.5,
+    -5.0,
+    -4.95,
+    -4.9,
+    -4.85,
+    -4.8,
+    -4.75,
+    -4.7,
+    -4.65,
+    -4.6,
+    -4.55,
+    -4.5,
+    -4.45,
+    -4.4,
+    -4.35,
+    -4.3,
+    -4.25,
+    -4.2,
+    -4.15,
+    -4.1,
+    -4.05,
+    -4.0,
+    -3.95,
+    -3.9,
+    -3.85,
+    -3.8,
+    -3.75,
+    -3.7,
+    -3.65,
+    -3.6,
+    -3.55,
+    -3.5,
+    -3.45,
+    -3.4,
+    -3.35,
+    -3.3,
+    -3.25,
+    -3.2,
+    -3.15,
+    -3.1,
+    -3.05,
+    -3.0,
+    -2.95,
+    -2.9,
+    -2.85,
+    -2.8,
+    -2.75,
+    -2.7,
+    -2.5,
+    -2.0,
+    -1.5,
+    -1.0,
+    -0.5,
+    0.0,
+    0.25,
+    0.5,
+    0.75,
+    1.0,
+    1.25,
+    1.5,
+    1.75,
+    2.0
+  ],
+  "num_frames": 50,
+  "device": "cuda",
+  "elapsed_seconds": 151.50001261895522,
+  "loss_definitions": {
+    "raw_mse": "mean over all 50*600*600 pixels with fixed physical scale",
+    "gain_mse": "same MSE after one scalar gain fitted jointly to all 50 frames",
+    "mean_relative_l2": "mean_i ||prediction_i-target_i||_2 / ||target_i||_2",
+    "gain": "dot(prediction,target)/dot(prediction,prediction), no bias"
+  },
+  "alignment": {
+    "num_frames": 50,
+    "object_sha256": "cae347bdd8476fc852fb79db9452951042e6c6fff9651253426aa92163fe5c7d",
+    "phi_true_600_sha256": "75f333bc5d11b735f2a4d64a350f0be0b4e6c01063f821c92a4b451aef5a1aad",
+    "phase_value_sha256": "5c6d20da4bdf90e98deab736e268322318a90ec614cb1e29c989ccf17d43365f",
+    "directories": [
+      "/home/xiangwan/program/PAWavefrontLab/outputs/orpam_b_to_a/dataset_nfft2160",
+      "/home/xiangwan/program/PAWavefrontLab/outputs/orpam_pupil_mask_loss_sweep/b_circle_6p9mm_nfft2160",
+      "/home/xiangwan/program/PAWavefrontLab/outputs/orpam_pupil_mask_loss_sweep/b_circle_6p5mm_nfft2160"
+    ]
+  },
+  "curves": {
+    "B-square / A-square": {
+      "observation": "B-square",
+      "predictor": "A-square",
+      "pupil_diameter_mm": "",
+      "alpha_count": 67,
+      "raw_mse": {
+        "alpha_best": -3.15,
+        "minimum": 0.0002974177055355497,
+        "alpha_1": 0.00040899550587020315,
+        "alpha_1_minus_minimum": 0.00011157780033465344
+      },
+      "gain_mse": {
+        "alpha_best": -3.25,
+        "minimum": 0.0002957135515703699,
+        "alpha_1": 0.00040898441300227337,
+        "alpha_1_minus_minimum": 0.00011327086143190346
+      },
+      "mean_relative_l2": {
+        "alpha_best": -3.4,
+        "minimum": 0.15865577249416757,
+        "alpha_1": 0.18705738223150908,
+        "alpha_1_minus_minimum": 0.028401609737341516
+      },
+      "global_gain_at_gain_mse_best": 1.0126954587745325,
+      "sampled_minimum_at_boundary": false
+    },
+    "B-circle-6.9 / A-square": {
+      "observation": "B-circle-6.9mm",
+      "predictor": "A-square",
+      "pupil_diameter_mm": 6.9,
+      "alpha_count": 67,
+      "raw_mse": {
+        "alpha_best": -3.1,
+        "minimum": 0.00034664195688057864,
+        "alpha_1": 0.0004568535506472004,
+        "alpha_1_minus_minimum": 0.00011021159376662173
+      },
+      "gain_mse": {
+        "alpha_best": -3.15,
+        "minimum": 0.00034281144125699177,
+        "alpha_1": 0.00045623731369458004,
+        "alpha_1_minus_minimum": 0.00011342587243758827
+      },
+      "mean_relative_l2": {
+        "alpha_best": -3.3,
+        "minimum": 0.1707111334304378,
+        "alpha_1": 0.19610068540858475,
+        "alpha_1_minus_minimum": 0.025389551978146935
+      },
+      "global_gain_at_gain_mse_best": 1.0188488570167382,
+      "sampled_minimum_at_boundary": false
+    },
+    "B-circle-6.5 / A-square": {
+      "observation": "B-circle-6.5mm",
+      "predictor": "A-square",
+      "pupil_diameter_mm": 6.5,
+      "alpha_count": 67,
+      "raw_mse": {
+        "alpha_best": -3.1,
+        "minimum": 0.0003590929016438759,
+        "alpha_1": 0.0004670248053006144,
+        "alpha_1_minus_minimum": 0.00010793190365673849
+      },
+      "gain_mse": {
+        "alpha_best": -3.2,
+        "minimum": 0.0003551363012889564,
+        "alpha_1": 0.00046634611526238153,
+        "alpha_1_minus_minimum": 0.00011120981397342515
+      },
+      "mean_relative_l2": {
+        "alpha_best": -3.25,
+        "minimum": 0.17374944980509863,
+        "alpha_1": 0.19787638478026356,
+        "alpha_1_minus_minimum": 0.024126934975164938
+      },
+      "global_gain_at_gain_mse_best": 1.0192871277271192,
+      "sampled_minimum_at_boundary": false
+    },
+    "B-circle-6.9 / A-circle-6.9": {
+      "observation": "B-circle-6.9mm",
+      "predictor": "A-circle-6.9mm",
+      "pupil_diameter_mm": 6.9,
+      "alpha_count": 67,
+      "raw_mse": {
+        "alpha_best": -3.65,
+        "minimum": 0.00034203584699867066,
+        "alpha_1": 0.00044995048741576683,
+        "alpha_1_minus_minimum": 0.00010791464041709617
+      },
+      "gain_mse": {
+        "alpha_best": -3.7,
+        "minimum": 0.00034122566819940825,
+        "alpha_1": 0.00044991497547380724,
+        "alpha_1_minus_minimum": 0.00010868930727439899
+      },
+      "mean_relative_l2": {
+        "alpha_best": -3.95,
+        "minimum": 0.16875562617339177,
+        "alpha_1": 0.19433847671876506,
+        "alpha_1_minus_minimum": 0.025582850545373292
+      },
+      "global_gain_at_gain_mse_best": 1.0085906901597963,
+      "sampled_minimum_at_boundary": false
+    },
+    "B-circle-6.5 / A-circle-6.5": {
+      "observation": "B-circle-6.5mm",
+      "predictor": "A-circle-6.5mm",
+      "pupil_diameter_mm": 6.5,
+      "alpha_count": 67,
+      "raw_mse": {
+        "alpha_best": -4.0,
+        "minimum": 0.00035728575512531893,
+        "alpha_1": 0.00046103772982666457,
+        "alpha_1_minus_minimum": 0.00010375197470134564
+      },
+      "gain_mse": {
+        "alpha_best": -4.05,
+        "minimum": 0.00035668773813110236,
+        "alpha_1": 0.00046094724897587314,
+        "alpha_1_minus_minimum": 0.00010425951084477077
+      },
+      "mean_relative_l2": {
+        "alpha_best": -4.3,
+        "minimum": 0.1722963523443807,
+        "alpha_1": 0.1963416985921653,
+        "alpha_1_minus_minimum": 0.024045346247784594
+      },
+      "global_gain_at_gain_mse_best": 1.0074010961315445,
+      "sampled_minimum_at_boundary": false
+    }
+  }
+}

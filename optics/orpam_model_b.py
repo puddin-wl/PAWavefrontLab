@@ -1,8 +1,9 @@
 """Differentiable physical forward model B for point-scanning OR-PAM.
 
 The model deliberately stops at an ideal, paraxial Fourier lens.  It uses a
-square, uniformly illuminated 1080 x 1080 SLM pupil and does not include the
-SLM-to-lens path, defocus propagation, a circular stop, or acoustic effects.
+uniformly illuminated 1080 x 1080 SLM pupil with an optional hard circular
+stop and does not include the SLM-to-lens path, defocus propagation, or
+acoustic effects.
 
 Tensor axes follow the PyTorch image convention: the penultimate axis is the
 physical y/row coordinate and the last axis is the physical x/column
@@ -38,6 +39,8 @@ class ORPAMModelBConfig:
     phase_sign: int = -1
     quadrature_order: int = 12
     kernel_radius: int = 32
+    pupil_shape: str = "square"
+    pupil_diameter_m: Optional[float] = None
 
     def __post_init__(self) -> None:
         positive = {
@@ -61,6 +64,23 @@ class ORPAMModelBConfig:
             raise ValueError("quadrature_order must be positive.")
         if self.kernel_radius < 0:
             raise ValueError("kernel_radius must be non-negative.")
+        if self.pupil_shape not in {"square", "circle"}:
+            raise ValueError("pupil_shape must be 'square' or 'circle'.")
+        if self.pupil_shape == "square" and self.pupil_diameter_m is not None:
+            raise ValueError("pupil_diameter_m is only valid for a circular pupil.")
+        if self.pupil_shape == "circle":
+            if (
+                self.pupil_diameter_m is None
+                or not np.isfinite(self.pupil_diameter_m)
+                or self.pupil_diameter_m <= 0
+            ):
+                raise ValueError(
+                    "A circular pupil requires a finite positive pupil_diameter_m."
+                )
+            if self.pupil_diameter_m > self.slm_width_m:
+                raise ValueError(
+                    "pupil_diameter_m cannot exceed the active SLM width."
+                )
 
     @property
     def slm_width_m(self) -> float:
@@ -90,7 +110,11 @@ class ORPAMModelBConfig:
                 "slm_width_m": self.slm_width_m,
                 "focus_pixel_pitch_m": self.focus_pixel_pitch_m,
                 "focus_field_width_m": self.focus_field_width_m,
-                "pupil_amplitude": "uniform square",
+                "pupil_amplitude": (
+                    "uniform square"
+                    if self.pupil_shape == "square"
+                    else "uniform binary circle"
+                ),
                 "phase_convention": "exp(+1j * aberration) * exp(phase_sign * 1j * SLM)",
                 "psf_normalization": "continuous-area integral equals one",
                 "object_basis": "5 um x 5 um piecewise constant cells",
@@ -160,6 +184,35 @@ def _image_nchw(image: torch.Tensor, name: str) -> torch.Tensor:
     return image
 
 
+def pupil_amplitude_mask(
+    config: ORPAMModelBConfig,
+    *,
+    device: torch.device | str = "cpu",
+    dtype: torch.dtype = torch.float32,
+) -> torch.Tensor:
+    """Return the physical SLM-plane amplitude mask on pixel-centre coordinates.
+
+    The circular boundary is sampled without edge softening: a pixel is one
+    exactly when its centre lies at radius no larger than ``diameter / 2``.
+    Even grids are centred between the middle four pixels, matching the phase
+    coordinate convention used by this project.
+    """
+
+    if not dtype.is_floating_point:
+        raise ValueError("pupil mask dtype must be a real floating-point type.")
+    if config.pupil_shape == "square":
+        return torch.ones(
+            (config.slm_size, config.slm_size), device=device, dtype=dtype
+        )
+    coordinate = (
+        torch.arange(config.slm_size, device=device, dtype=dtype)
+        - (config.slm_size - 1) / 2.0
+    ) * config.slm_pixel_pitch_m
+    y, x = torch.meshgrid(coordinate, coordinate, indexing="ij")
+    radius = 0.5 * float(config.pupil_diameter_m)
+    return (x.square() + y.square() <= radius**2).to(dtype=dtype)
+
+
 def ideal_fourier_psf(
     slm_phase: torch.Tensor,
     aberration_phase: Optional[torch.Tensor],
@@ -193,6 +246,12 @@ def ideal_fourier_psf(
 
     combined_phase = aberration_phase + config.phase_sign * slm_phase
     pupil = torch.exp(1j * combined_phase)
+    # Keep the default square path byte-for-byte equivalent to the original
+    # implementation.  Only the optional circle changes the SLM-plane field.
+    if config.pupil_shape == "circle":
+        pupil = pupil * pupil_amplitude_mask(
+            config, device=pupil.device, dtype=slm_phase.dtype
+        )
     padding = (config.fft_size - config.slm_size) // 2
     if padding:
         pupil = F.pad(pupil, (padding, padding, padding, padding))
