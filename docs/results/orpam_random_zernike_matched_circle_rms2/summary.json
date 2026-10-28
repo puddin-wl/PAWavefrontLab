@@ -1,0 +1,114 @@
+{
+  "experiment": "random Zernike aberration through model A and model B",
+  "object_source": "/home/xiangwan/program/PAWavefrontLab/outputs/orpam_b_to_a/dataset_nfft2160/object_true_normalized.npy",
+  "known_slm_phase": "zero for both aberrated-image simulations",
+  "pupil": {
+    "model_a": "diagnostic uniform hard circular pupil, diameter 6.9 mm",
+    "model_b": "uniform hard circular pupil, diameter 6.9 mm"
+  },
+  "zernike": {
+    "basis": "project AOtools Noll-normalized basis",
+    "seed": 20261028,
+    "num_modes": 28,
+    "random_modes": "Noll 4 through num_modes",
+    "constraints": "piston adjusted to zero mean; Noll 2 and 3 tip/tilt set to zero",
+    "coefficients_rad": [
+      0.21535153687000275,
+      0.0,
+      0.0,
+      0.22297008335590363,
+      -1.0442209243774414,
+      1.0375968217849731,
+      0.5718297958374023,
+      0.09550561010837555,
+      0.4949571192264557,
+      -0.5911317467689514,
+      -0.3500504791736603,
+      0.3485635221004486,
+      -0.5334701538085938,
+      0.4307745695114136,
+      0.48801565170288086,
+      0.3595964312553406,
+      0.20281441509723663,
+      1.1546473503112793,
+      0.05047419294714928,
+      -0.035609230399131775,
+      0.03811664134263992,
+      0.02565126121044159,
+      0.24259507656097412,
+      -0.29670727252960205,
+      -0.6696146130561829,
+      -0.297807902097702,
+      0.3306191563606262,
+      -0.2821651101112366
+    ],
+    "phase_600_rms_rad": 2.0000000448339383,
+    "phase_1080_rms_rad": 1.993931639356067,
+    "phase_600_peak_to_valley_rad": 14.367124557495117,
+    "phase_1080_peak_to_valley_rad": 14.3885498046875
+  },
+  "model_a": {
+    "grid": [
+      600,
+      600
+    ],
+    "forward": "original NeuWS 600 FFT, sum-normalized PSF, PSF flip, padded FFT convolution",
+    "zero_phase_psf_sum": 0.9999998812319608,
+    "effective_phase_rms_rad": 1.673924593202665,
+    "aberrated_kernel_spread_scan_pixels": {
+      "energy_sum": 0.9999999405953083,
+      "centroid_row_pixel": 299.2582215043519,
+      "centroid_column_pixel": 299.1684267894708,
+      "rms_radius_pixel": 10.661515413329546
+    },
+    "metrics_against_original_object": {
+      "ssim": 0.879036388262219,
+      "psnr_db": 29.565131450906623,
+      "mse": 0.0011053170134840292,
+      "relative_l2": 0.2866009691964494
+    }
+  },
+  "model_b": {
+    "wavelength_m": 5.32e-07,
+    "focal_length_m": 0.05,
+    "slm_pixel_pitch_m": 6.4e-06,
+    "slm_size": 1080,
+    "fft_size": 2160,
+    "scan_pitch_m": 5e-06,
+    "phase_sign": -1,
+    "quadrature_order": 12,
+    "kernel_radius": 32,
+    "pupil_shape": "circle",
+    "pupil_diameter_m": 0.006900000000000001,
+    "slm_width_m": 0.006912,
+    "focus_pixel_pitch_m": 1.924189814814815e-06,
+    "focus_field_width_m": 0.00415625,
+    "pupil_amplitude": "uniform binary circle",
+    "phase_convention": "exp(+1j * aberration) * exp(phase_sign * 1j * SLM)",
+    "psf_normalization": "continuous-area integral equals one",
+    "object_basis": "5 um x 5 um piecewise constant cells",
+    "scan_boundary": "zero extension outside the finite object",
+    "kernel_application": "PyTorch conv2d cross-correlation; no kernel flip",
+    "coordinate_convention": "tensor row=y, column=x; zero at FFT index N//2",
+    "zero_phase_psf_area_integral": 1.000000028382389,
+    "effective_phase_rms_inside_circle_rad": 1.6690797341744659,
+    "aberrated_kernel_spread_scan_pixels": {
+      "energy_sum": 0.9955863153676461,
+      "centroid_row_pixel": 31.80168333479169,
+      "centroid_column_pixel": 31.866902355797503,
+      "rms_radius_pixel": 3.1148378483777726
+    },
+    "aberrated_kernel_retained_energy": 0.9955863356590271,
+    "aberrated_kernel_truncation_error": 0.0044136643409729,
+    "metrics_against_original_object": {
+      "ssim": 0.9479454797664106,
+      "psnr_db": 33.80506710645416,
+      "mse": 0.0004163832870908146,
+      "relative_l2": 0.17590608863114715
+    }
+  },
+  "metric_definition": {
+    "comparison": "raw simulated image versus object_original; no gain fit or image normalization",
+    "data_range": 1.0
+  }
+}
